@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+*.pem
+key.pem
+cert.pem
+__pycache__
+*.pyc
+venv/
+.env.bak
+*.log
+*.db
+*.sqlite
+.DS_Store
+cloudflared
+*.service
+OPERATIONS.md

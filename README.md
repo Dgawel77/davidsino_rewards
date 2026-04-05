@@ -14,7 +14,21 @@ Loyalty and rewards tracking system for The Davidsino.
 - **Frontend:** Vanilla HTML/CSS/JS (mobile-responsive)
 - **Card Reading:** USB HID readers (keyboard input) + Web NFC (Android Chrome)
 
-## Setup
+## Quick Start
+
+### Option 1: Docker Compose (Recommended)
+```bash
+cd davidsino-rewards
+docker compose up -d
+```
+App runs at `http://localhost:8000`. Database persists in a Docker volume.
+
+To customize admin pins:
+```bash
+ADMIN_PIN=9999 WORKER_PIN=4444 docker compose up -d
+```
+
+### Option 2: Manual Setup
 
 ### 1. Install PostgreSQL
 ```bash
