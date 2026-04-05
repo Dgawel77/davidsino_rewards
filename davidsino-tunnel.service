@@ -1,0 +1,16 @@
+[Unit]
+Description=Davidsino Cloudflare Tunnel
+After=network.target davidsino-api.service
+
+[Service]
+Type=simple
+User=dgawel
+WorkingDirectory=/home/dgawel/.openclaw/workspace/davidsino-rewards
+ExecStart=/home/dgawel/.openclaw/workspace/davidsino-rewards/cloudflared tunnel --url http://localhost:8000 --no-autoupdate
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/dgawel/.openclaw/workspace/davidsino-rewards/tunnel.log
+StandardError=append:/home/dgawel/.openclaw/workspace/davidsino-rewards/tunnel.log
+
+[Install]
+WantedBy=multi-user.target

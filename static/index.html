@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Davidsino Rewards</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 16px;
+        }
+        .container { max-width: 500px; margin: 0 auto; }
+        h1 {
+            text-align: center;
+            color: #ffd700;
+            font-size: 1.8rem;
+            margin-bottom: 8px;
+        }
+        .subtitle { text-align: center; color: #888; margin-bottom: 24px; font-size: 0.9rem; }
+
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            border: 1px solid #0f3460;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 12px;
+            transition: opacity 0.2s;
+        }
+        .btn:active { opacity: 0.8; }
+        .btn-primary { background: #e94560; color: white; }
+        .btn-secondary { background: #0f3460; color: white; }
+        .btn-gold { background: #ffd700; color: #1a1a2e; }
+        .btn-green { background: #4caf50; color: white; }
+        .btn-small { padding: 10px 16px; font-size: 0.9rem; width: auto; display: inline-block; }
+
+        .input-group { margin-bottom: 16px; }
+        .input-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            background: #1a1a2e;
+            color: #eee;
+            font-size: 1rem;
+        }
+        .input-group input:focus { outline: none; border-color: #e94560; }
+
+        .player-info { text-align: center; }
+        .player-name { font-size: 1.5rem; color: #ffd700; margin-bottom: 8px; }
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #0f3460;
+        }
+        .stat { text-align: center; flex: 1; }
+        .stat-value { font-size: 1.2rem; font-weight: bold; }
+        .stat-label { font-size: 0.75rem; color: #888; margin-top: 4px; }
+        .pnl-positive { color: #4caf50; }
+        .pnl-negative { color: #f44336; }
+
+        .hidden { display: none; }
+
+        .scan-status {
+            text-align: center;
+            padding: 40px 20px;
+            color: #888;
+        }
+        .scan-status.scanning { color: #ffd700; }
+        .scan-status.found { color: #4caf50; }
+        .scan-status.not-found { color: #f44336; }
+
+        .error { color: #f44336; text-align: center; margin-top: 12px; }
+        .success { color: #4caf50; text-align: center; margin-top: 12px; }
+
+        .tab-bar {
+            display: flex;
+            background: #16213e;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: #888;
+            font-weight: bold;
+        }
+        .tab.active { background: #e94560; color: white; }
+
+        .player-list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .player-list-name { font-weight: bold; }
+        .player-list-points { color: #ffd700; font-weight: bold; }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: #e94560;
+            font-size: 0.9rem;
+            cursor: pointer;
+            margin-bottom: 12px;
+        }
+
+        #nfc-status {
+            text-align: center;
+            padding: 8px;
+            background: #0f3460;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            font-size: 0.85rem;
+        }
+
+        .reward-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .reward-item:active { border-color: #ffd700; }
+        .reward-name { font-weight: bold; font-size: 1rem; }
+        .reward-desc { font-size: 0.8rem; color: #888; margin-top: 2px; }
+        .reward-cost { color: #ffd700; font-weight: bold; font-size: 1.1rem; }
+
+        /* Roast card */
+        .roast-card {
+            background: linear-gradient(135deg, #2d1b4e, #1a1a2e);
+            border: 2px solid #ffd700;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .roast-label {
+            font-size: 0.75rem;
+            color: #ffd700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        .roast-text {
+            font-size: 1rem;
+            font-style: italic;
+            color: #eee;
+            line-height: 1.4;
+        }
+
+        /* History table */
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .history-table th {
+            text-align: left;
+            padding: 8px 6px;
+            background: #0f3460;
+            color: #aaa;
+            font-weight: bold;
+            font-size: 0.75rem;
+        }
+        .history-table td {
+            padding: 8px 6px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .history-table tr:last-child td { border-bottom: none; }
+        .event-deposit { color: #4caf50; }
+        .event-cashout { color: #2196f3; }
+        .event-reward_add { color: #ff9800; }
+        .event-reward_redeem { color: #9c27b0; }
+        .event-registration { color: #888; }
+
+        /* Daily PNL chart */
+        .chart-container {
+            margin-top: 16px;
+            padding: 12px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        .chart-bar-container {
+            display: flex;
+            align-items: flex-end;
+            height: 120px;
+            gap: 4px;
+            min-width: 100%;
+            padding-bottom: 20px;
+            position: relative;
+        }
+        .chart-bar {
+            flex: 1;
+            min-width: 20px;
+            border-radius: 3px 3px 0 0;
+            position: relative;
+            cursor: pointer;
+        }
+        .chart-bar-positive { background: #4caf50; }
+        .chart-bar-negative { background: #f44336; }
+        .chart-bar-label {
+            position: absolute;
+            bottom: -18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.6rem;
+            color: #888;
+            white-space: nowrap;
+        }
+        .chart-bar-value {
+            position: absolute;
+            top: -16px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.6rem;
+            color: #eee;
+            white-space: nowrap;
+        }
+
+        /* Leaderboard */
+        .leaderboard-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid #0f3460;
+        }
+        .leaderboard-item.rank-1 { border-left-color: #ffd700; }
+        .leaderboard-item.rank-2 { border-left-color: #c0c0c0; }
+        .leaderboard-item.rank-3 { border-left-color: #cd7f32; }
+        .leaderboard-rank {
+            font-weight: bold;
+            font-size: 1.1rem;
+            width: 30px;
+            color: #ffd700;
+        }
+        .leaderboard-name { flex: 1; font-weight: bold; margin-left: 8px; }
+        .leaderboard-value { text-align: right; font-size: 0.9rem; }
+        .house-summary {
+            text-align: center;
+            padding: 16px;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border: 1px solid #ffd700;
+        }
+        .house-label { font-size: 0.8rem; color: #ffd700; text-transform: uppercase; }
+        .house-value { font-size: 1.5rem; font-weight: bold; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎰 Davidsino</h1>
+        <p class="subtitle">Rewards & Loyalty Program</p>
+
+        <div id="nfc-status" class="hidden"></div>
+
+        <!-- Main Menu -->
+        <div id="menu-view">
+            <div class="card">
+                <button class="btn btn-gold" onclick="startScan()">📱 Scan Card</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    Tap your card or use NFC reader
+                </p>
+            </div>
+            <div class="card">
+                <button class="btn btn-secondary" onclick="showLeaderboard()">🏆 Leaderboard</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    See who's winning (and losing)
+                </p>
+            </div>
+            <div class="card">
+                <button class="btn btn-green" onclick="showWorkerLogin()">🍸 Worker Mode</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    Redeem points for rewards
+                </p>
+            </div>
+            <div class="card">
+                <button class="btn btn-primary" onclick="showAdminLogin()">🔐 Dealer Mode</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    Manage deposits, PNL, players
+                </p>
+            </div>
+        </div>
+
+        <!-- Scan Result View -->
+        <div id="scan-view" class="hidden">
+            <div class="card">
+                <div id="scan-status" class="scan-status">
+                    Hold card to reader or tap NFC...
+                </div>
+            </div>
+            <div id="player-result" class="hidden">
+                <div class="card player-info">
+                    <div class="player-name" id="result-name"></div>
+                    <div class="stats-row" style="border-top:none; margin-top:0; padding-top:0;">
+                        <div class="stat">
+                            <div class="stat-value" id="result-points" style="color:#ffd700;">0</div>
+                            <div class="stat-label">Reward Points</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="result-pnl">$0</div>
+                            <div class="stat-label">Net P/L</div>
+                        </div>
+                    </div>
+                    <div class="stats-row">
+                        <div class="stat">
+                            <div class="stat-value" id="result-cashin">$0</div>
+                            <div class="stat-label">Cash In</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="result-cashout">$0</div>
+                            <div class="stat-label">Cash Out</div>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-gold" onclick="showSummary()">📊 View Full Summary</button>
+                <button class="btn btn-secondary" onclick="backToMenu()">← Back</button>
+            </div>
+            <div id="unregistered-result" class="hidden">
+                <div class="card" style="text-align:center;">
+                    <p style="color:#f44336;">Card not registered</p>
+                    <p style="color:#888; font-size:0.85rem; margin-top:8px;">See dealer to register</p>
+                </div>
+                <button class="btn btn-secondary" onclick="backToMenu()">← Back</button>
+            </div>
+            
+            <!-- Manual Search Section -->
+            <div class="card" style="margin-top: 16px;">
+                <h3 style="margin-bottom: 12px; font-size: 1rem;">🔍 Look Up Player</h3>
+                <div class="input-group">
+                    <label>Search by Name or Card ID</label>
+                    <input type="text" id="search-input" placeholder="Enter name or card ID" onkeypress="if(event.key==='Enter') searchPlayers()">
+                </div>
+                <button class="btn btn-small btn-secondary" onclick="searchPlayers()">Search</button>
+                <div id="search-results" style="margin-top: 12px;"></div>
+            </div>
+        </div>
+
+        <!-- Summary View -->
+        <div id="summary-view" class="hidden">
+            <button class="back-btn" onclick="backToScan()">← Back to Scan</button>
+            <div id="summary-roast" class="roast-card hidden">
+                <div class="roast-label">🎰 Vig Says</div>
+                <div class="roast-text" id="roast-text"></div>
+            </div>
+            <div class="card player-info">
+                <div class="player-name" id="summary-name"></div>
+                <div class="stats-row" style="border-top:none; margin-top:0; padding-top:0;">
+                    <div class="stat">
+                        <div class="stat-value" id="summary-points" style="color:#ffd700;">0</div>
+                        <div class="stat-label">Reward Points</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="summary-pnl">$0</div>
+                        <div class="stat-label">Net P/L</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-bar">
+                <button class="tab active" onclick="showSummaryTab('history')">History</button>
+                <button class="tab" onclick="showSummaryTab('daily')">Daily P/L</button>
+            </div>
+
+            <div id="summary-history">
+                <div class="card" style="padding: 0; overflow-x: auto;">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Details</th>
+                                <th style="text-align:right;">Change</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-body">
+                            <tr><td colspan="3" style="text-align:center; color:#888;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="summary-daily" class="hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 8px; font-size: 1rem;">Daily P/L</h3>
+                    <div class="chart-container">
+                        <div class="chart-bar-container" id="daily-chart"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard View -->
+        <div id="leaderboard-view" class="hidden">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="house-summary">
+                <div class="house-label">The House Is</div>
+                <div class="house-value" id="house-pnl">Loading...</div>
+            </div>
+            <div class="tab-bar">
+                <button class="tab active" onclick="showLeaderboardSort('pnl')">By P/L</button>
+                <button class="tab" onclick="showLeaderboardSort('points')">By Points</button>
+                <button class="tab" onclick="showLeaderboardSort('cash_in')">By Buy-in</button>
+            </div>
+            <div id="leaderboard-list">
+                <div style="text-align:center; color:#888; padding: 20px;">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Worker Login -->
+        <div id="worker-login-view" class="hidden">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="card">
+                <h2 style="margin-bottom:16px;">🍸 Worker Login</h2>
+                <div class="input-group">
+                    <label>PIN</label>
+                    <input type="password" id="worker-pin" placeholder="Enter worker PIN" maxlength="10">
+                </div>
+                <button class="btn btn-green" onclick="workerLogin()">Login</button>
+                <div id="worker-login-error" class="error hidden"></div>
+            </div>
+        </div>
+
+        <!-- Worker Panel -->
+        <div id="worker-view" class="hidden">
+            <button class="back-btn" onclick="workerLogout()">← Logout</button>
+            <div class="card">
+                <h3 style="margin-bottom:12px;">Redeem Points</h3>
+                <div class="input-group">
+                    <label>Card ID</label>
+                    <input type="text" id="worker-card-id" placeholder="Scan or enter card ID">
+                </div>
+                <div id="worker-player-info" class="hidden" style="text-align:center; margin-bottom:16px;">
+                    <div style="color:#ffd700; font-weight:bold;" id="worker-player-name"></div>
+                    <div style="font-size:0.85rem; color:#888;">Points: <span id="worker-player-points" style="color:#ffd700; font-weight:bold;">0</span></div>
+                </div>
+                <button class="btn btn-small btn-secondary" onclick="workerLookupPlayer()" style="margin-bottom:12px;">Look Up Player</button>
+                <div id="reward-list">
+                    <h4 style="margin-bottom:8px; color:#aaa;">Select Reward:</h4>
+                    <div id="rewards-container">Loading...</div>
+                </div>
+                <div id="worker-result" class="hidden"></div>
+            </div>
+        </div>
+
+        <!-- Admin Login -->
+        <div id="admin-login-view" class="hidden">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="card">
+                <h2 style="margin-bottom:16px;">🔐 Dealer Login</h2>
+                <div class="input-group">
+                    <label>PIN</label>
+                    <input type="password" id="admin-pin" placeholder="Enter dealer PIN" maxlength="10">
+                </div>
+                <button class="btn btn-primary" onclick="adminLogin()">Login</button>
+                <div id="login-error" class="error hidden"></div>
+            </div>
+        </div>
+
+        <!-- Admin Panel -->
+        <div id="admin-view" class="hidden">
+            <button class="back-btn" onclick="adminLogout()">← Logout</button>
+
+            <div class="tab-bar">
+                <button class="tab active" onclick="showAdminTab('actions')">Actions</button>
+                <button class="tab" onclick="showAdminTab('players')">Players</button>
+                <button class="tab" onclick="showAdminTab('register')">Register</button>
+            </div>
+
+            <div id="admin-actions">
+                <div class="card">
+                    <h3 style="margin-bottom:12px;">Card Action</h3>
+                    <div class="input-group">
+                        <label>Card ID</label>
+                        <input type="text" id="action-card-id" placeholder="Scan or enter card ID">
+                    </div>
+                    <div class="input-group">
+                        <label>Action</label>
+                        <select id="action-type">
+                            <option value="deposit">💵 Deposit (cash in + earn points)</option>
+                            <option value="cashout">💸 Cash Out (update PNL)</option>
+                            <option value="add_points">⭐ Add Bonus Points</option>
+                            <option value="redeem_points">🎁 Manual Point Redemption</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Amount ($)</label>
+                        <input type="number" id="action-amount" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <div class="input-group">
+                        <label>Description (optional)</label>
+                        <input type="text" id="action-description" placeholder="e.g., Friday deposit">
+                    </div>
+                    <button class="btn btn-primary" onclick="submitAction()">Submit</button>
+                    <div id="action-result" class="hidden"></div>
+                </div>
+            </div>
+
+            <div id="admin-players" class="hidden">
+                <div class="card">
+                    <h3 style="margin-bottom:12px;">All Players</h3>
+                    <div id="players-list">Loading...</div>
+                </div>
+            </div>
+
+            <div id="admin-register" class="hidden">
+                <div class="card">
+                    <h3 style="margin-bottom:12px;">Register New Player</h3>
+                    <div class="input-group">
+                        <label>Card ID</label>
+                        <input type="text" id="reg-card-id" placeholder="Scan or enter card ID">
+                    </div>
+                    <div class="input-group">
+                        <label>Player Name</label>
+                        <input type="text" id="reg-name" placeholder="Enter name">
+                    </div>
+                    <button class="btn btn-gold" onclick="registerPlayer()">Register</button>
+                    <div id="reg-result" class="hidden"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

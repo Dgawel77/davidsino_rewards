@@ -1,0 +1,36 @@
+# Environment & secrets
+.env
+*.pem
+key.pem
+cert.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.env.bak
+
+# Cloudflare tunnel binary (large, can be re-downloaded)
+cloudflared
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database (if using local SQLite)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
