@@ -84,7 +84,18 @@ Server starts on `http://0.0.0.0:8000`
 
 ## Production Deployment
 
-### Option 1: Direct (current setup)
+### Option 1: Docker Compose (Recommended)
+```bash
+docker compose up -d
+```
+For production, set your own pins via environment variables:
+```bash
+ADMIN_PIN=your_secret_pin WORKER_PIN=your_worker_pin docker compose up -d
+```
+
+To expose publicly, pair with a reverse proxy (nginx, Caddy) or Cloudflare Tunnel pointing at `http://localhost:8000`.
+
+### Option 2: Direct
 Run with uvicorn behind nginx reverse proxy.
 
 ### Option 2: Systemd Service
