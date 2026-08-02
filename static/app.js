@@ -6,6 +6,8 @@ let currentScanAbort = null;
 let currentCardId = null;
 let currentPlayerId = null;
 let currentLeaderboardSort = 'pnl';
+// Kept in memory only, so dealer-only endpoints can be called with the PIN header.
+let adminPin = null;
 
 // Check NFC support
 function checkNFC() {
@@ -23,8 +25,10 @@ checkNFC();
 
 // ===== View Navigation =====
 function showView(viewId) {
-    ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view', 'admin-login-view', 'admin-view'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
+    ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view',
+     'admin-login-view', 'admin-view', 'slots-lobby-view', 'slots-play-view', 'deposit-view'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
     });
     document.getElementById(viewId).classList.remove('hidden');
 }
@@ -35,6 +39,7 @@ function backToMenu() {
         currentScanAbort = null;
     }
     currentRole = null;
+    adminPin = null;
     currentCardId = null;
     currentPlayerId = null;
     showView('menu-view');
@@ -288,6 +293,7 @@ function formatEventType(type) {
         'reward_add': '⭐ Bonus Pts',
         'reward_redeem': '🎁 Redeem',
         'registration': '📝 Registered',
+        'slot_spin': '🎰 Slots',
     };
     return labels[type] || type;
 }
@@ -477,6 +483,7 @@ async function adminLogin() {
         if (resp.ok) {
             const data = await resp.json();
             currentRole = data.role;
+            adminPin = pin;   // needed for the dealer-only deposit endpoints
             showView('admin-view');
             loadPlayers();
         } else {
@@ -491,6 +498,7 @@ async function adminLogin() {
 
 function adminLogout() {
     currentRole = null;
+    adminPin = null;
     backToMenu();
 }
 
@@ -498,13 +506,15 @@ function showAdminTab(tab) {
     document.querySelectorAll('#admin-view .tab').forEach(t => t.classList.remove('active'));
     event.target.classList.add('active');
 
-    document.getElementById('admin-actions').classList.add('hidden');
-    document.getElementById('admin-players').classList.add('hidden');
-    document.getElementById('admin-register').classList.add('hidden');
+    ['actions', 'pending', 'players', 'register'].forEach(name => {
+        const el = document.getElementById('admin-' + name);
+        if (el) el.classList.add('hidden');
+    });
 
     document.getElementById('admin-' + tab).classList.remove('hidden');
 
     if (tab === 'players') loadPlayers();
+    if (tab === 'pending') loadPendingDeposits();
 }
 
 async function submitAction() {

@@ -287,6 +287,133 @@
         }
         .house-label { font-size: 0.8rem; color: #ffd700; text-transform: uppercase; }
         .house-value { font-size: 1.5rem; font-weight: bold; margin-top: 4px; }
+
+        /* ===== Slots ===== */
+        .machine-item {
+            padding: 14px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .machine-item:active { border-color: #ffd700; }
+        .machine-name { font-size: 1.25rem; color: #ffd700; font-weight: bold; }
+        .machine-tagline { font-size: 0.8rem; color: #888; margin-top: 2px; }
+        .machine-bets { font-size: 0.75rem; color: #666; margin-top: 6px; }
+
+        .slot-balance { margin: 10px 0; color: #aaa; font-size: 0.9rem; }
+        .slot-balance span { color: #ffd700; font-weight: bold; font-size: 1.1rem; }
+
+        .reel-area { display: flex; justify-content: center; gap: 6px; margin: 16px 0; }
+        .reel-col { display: flex; flex-direction: column; gap: 6px; }
+        .reel-cell {
+            width: 56px; height: 56px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.9rem;
+            background: #1a1a2e;
+            border: 2px solid #0f3460;
+            border-radius: 8px;
+        }
+        .reel-cell.spinning { animation: reelblur 0.14s linear infinite; }
+        .reel-cell.win-cell { border-color: #ffd700; box-shadow: 0 0 12px rgba(255,215,0,0.5); }
+        @keyframes reelblur { 50% { filter: blur(2px); opacity: 0.75; } }
+
+        .spin-result { min-height: 26px; font-weight: bold; margin-bottom: 8px; font-size: 0.95rem; }
+        .spin-result.win { color: #ffd700; animation: winpulse 0.45s ease 2; }
+        .spin-result.lose { color: #888; }
+        @keyframes winpulse { 50% { transform: scale(1.12); } }
+
+        .bet-row { display: flex; justify-content: center; align-items: center; gap: 14px; margin-bottom: 12px; }
+        .bet-adjust {
+            width: 44px; height: 44px; border-radius: 50%; border: none;
+            background: #0f3460; color: #fff; font-size: 1.4rem; cursor: pointer;
+        }
+        .bet-adjust:active { background: #e94560; }
+        .bet-display { min-width: 100px; font-weight: bold; color: #ffd700; font-size: 1.1rem; }
+        .bet-label { font-size: 0.7rem; color: #888; display: block; font-weight: normal; }
+
+        .paytable { margin-top: 12px; text-align: left; font-size: 0.85rem; }
+        .paytable-row {
+            display: flex; justify-content: space-between;
+            padding: 5px 8px; border-bottom: 1px solid #0f3460;
+        }
+        .paytable-note { color: #888; font-size: 0.75rem; margin-top: 8px; padding: 0 8px; }
+
+        /* Provable fairness */
+        .fairness-panel { margin-top: 12px; text-align: left; font-size: 0.8rem; }
+        .fairness-row { padding: 6px 0; border-bottom: 1px solid #0f3460; }
+        .fairness-label { color: #888; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .fairness-value {
+            color: #eee; font-family: monospace; font-size: 0.72rem;
+            word-break: break-all; margin-top: 2px;
+        }
+        .fairness-explainer {
+            background: #1a1a2e; border-left: 3px solid #ffd700;
+            padding: 10px; border-radius: 4px; color: #aaa;
+            font-size: 0.78rem; line-height: 1.5; margin-bottom: 12px;
+        }
+        .verify-output {
+            background: #0d0d1a; border-radius: 6px; padding: 10px; margin-top: 8px;
+            font-family: monospace; font-size: 0.75rem; color: #4caf50;
+            white-space: pre-wrap; word-break: break-all;
+        }
+
+        /* ===== Deposits ===== */
+        .method-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 12px; background: #1a1a2e; border-radius: 8px;
+            margin-bottom: 8px; cursor: pointer;
+            border: 2px solid transparent; transition: border-color 0.15s;
+        }
+        .method-item.selected { border-color: #ffd700; background: #1f1f3a; }
+        .method-icon {
+            width: 38px; height: 38px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: #0f3460; border-radius: 50%; font-size: 1.2rem; color: #ffd700;
+        }
+        .method-label { font-weight: bold; }
+        .method-sub { font-size: 0.75rem; color: #888; }
+
+        .amount-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .amount-preset {
+            flex: 1; min-width: 60px; padding: 10px; border: 1px solid #0f3460;
+            background: #1a1a2e; color: #eee; border-radius: 8px; cursor: pointer;
+            font-weight: bold;
+        }
+        .amount-preset:active { border-color: #ffd700; color: #ffd700; }
+
+        .pay-label { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .pay-amount { font-size: 1.6rem; color: #ffd700; font-weight: bold; margin: 6px 0 2px; word-break: break-all; }
+        .pay-amount-sub { font-size: 0.8rem; color: #888; margin-bottom: 12px; }
+        .pay-qr {
+            width: 180px; height: 180px; background: #fff;
+            padding: 8px; border-radius: 8px; margin: 8px auto; display: block;
+        }
+        .pay-address {
+            font-family: monospace; font-size: 0.75rem; color: #eee;
+            background: #1a1a2e; padding: 10px; border-radius: 6px;
+            word-break: break-all; margin: 10px 0;
+        }
+        .pay-network { font-size: 0.8rem; color: #e94560; margin-top: 8px; }
+        .pay-note { font-size: 0.8rem; color: #aaa; margin: 10px 0; line-height: 1.4; }
+
+        /* Dealer pending queue */
+        .pending-item {
+            padding: 12px; background: #1a1a2e; border-radius: 8px;
+            margin-bottom: 10px; border-left: 3px solid #ffd700;
+        }
+        .pending-head { display: flex; justify-content: space-between; align-items: flex-start; }
+        .pending-player { font-weight: bold; }
+        .pending-meta { font-size: 0.75rem; color: #888; margin-top: 2px; }
+        .pending-amount { color: #4caf50; font-weight: bold; font-size: 1.1rem; }
+        .pending-txid {
+            font-family: monospace; font-size: 0.7rem; color: #2196f3;
+            margin-top: 6px; word-break: break-all;
+        }
+        .pending-actions { display: flex; gap: 8px; margin-top: 10px; }
+        .pending-actions .btn { flex: 1; margin-bottom: 0; }
     </style>
 </head>
 <body>
@@ -302,6 +429,18 @@
                 <button class="btn btn-gold" onclick="startScan()">📱 Scan Card</button>
                 <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
                     Tap your card or use NFC reader
+                </p>
+            </div>
+            <div class="card">
+                <button class="btn btn-gold" onclick="showSlotsLobby()">🎰 Play Slots</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    Provably fair · wager your reward points
+                </p>
+            </div>
+            <div class="card">
+                <button class="btn btn-green" onclick="showDeposit()">₿ Add Funds</button>
+                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
+                    Crypto, Venmo, Cash App
                 </p>
             </div>
             <div class="card">
@@ -356,6 +495,8 @@
                     </div>
                 </div>
                 <button class="btn btn-gold" onclick="showSummary()">📊 View Full Summary</button>
+                <button class="btn btn-gold" onclick="showSlotsLobby()">🎰 Play Slots</button>
+                <button class="btn btn-green" onclick="showDeposit()">₿ Add Funds</button>
                 <button class="btn btn-secondary" onclick="backToMenu()">← Back</button>
             </div>
             <div id="unregistered-result" class="hidden">
@@ -448,6 +589,154 @@
             </div>
         </div>
 
+        <!-- Slots Lobby -->
+        <div id="slots-lobby-view" class="hidden">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="card">
+                <h3 style="margin-bottom:12px;">🎰 Pick a Machine</h3>
+                <div class="input-group">
+                    <label>Card ID</label>
+                    <input type="text" id="slots-card-id" placeholder="Scan or enter card ID"
+                           onchange="loadSlotPlayer(this.value.trim())">
+                </div>
+                <div id="slots-player-banner" class="hidden"
+                     style="text-align:center; margin-bottom:14px; padding:8px; background:#1a1a2e; border-radius:8px;">
+                    <span style="color:#ffd700; font-weight:bold;" id="slots-player-name"></span>
+                    · <span id="slots-player-points" style="color:#ffd700; font-weight:bold;">0</span> pts
+                </div>
+                <div id="machine-list">Loading...</div>
+                <p style="color:#666; font-size:0.75rem; text-align:center; margin-top:12px;">
+                    Slots use reward points only. Your cash P/L is never affected.
+                </p>
+            </div>
+        </div>
+
+        <!-- Slots Play -->
+        <div id="slots-play-view" class="hidden">
+            <button class="back-btn" onclick="slotsBack()">← Machines</button>
+            <div class="card" style="text-align:center;">
+                <div class="machine-name" id="machine-title"></div>
+                <div class="machine-tagline" id="machine-tagline"></div>
+                <div class="slot-balance">Points: <span id="slot-balance">0</span></div>
+
+                <div id="reel-area" class="reel-area"></div>
+                <div id="spin-result" class="spin-result"></div>
+
+                <div class="bet-row">
+                    <button class="bet-adjust" onclick="adjustBet(-1)">−</button>
+                    <div class="bet-display">
+                        <span id="bet-amount">10</span>
+                        <span class="bet-label">bet per spin</span>
+                    </div>
+                    <button class="bet-adjust" onclick="adjustBet(1)">+</button>
+                </div>
+
+                <button class="btn btn-gold" id="spin-btn" onclick="doSpin()">SPIN</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="maxBet()">Max Bet</button>
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="togglePaytable()">Paytable</button>
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="toggleFairness()">🔐 Fairness</button>
+                </div>
+
+                <div id="paytable" class="paytable hidden"></div>
+
+                <div id="fairness-panel" class="fairness-panel hidden">
+                    <div class="fairness-explainer">
+                        <strong style="color:#ffd700;">How you know this is fair</strong><br>
+                        Every spin comes from
+                        <code>HMAC-SHA256(server seed, "client seed:spin number")</code>.
+                        You see the <em>hash</em> of the server seed before you play, so the house
+                        is locked in — it can't swap the seed after seeing your bet. You control the
+                        client seed, so it can't pre-build a losing run for you either.
+                        Rotate the seed any time to reveal the secret and recheck every spin.
+                    </div>
+
+                    <div class="fairness-row">
+                        <div class="fairness-label">Server seed hash (committed now)</div>
+                        <div class="fairness-value" id="seed-hash">—</div>
+                    </div>
+                    <div class="fairness-row">
+                        <div class="fairness-label">Your client seed</div>
+                        <div class="fairness-value" id="seed-client">—</div>
+                    </div>
+                    <div class="fairness-row">
+                        <div class="fairness-label">Spins on this seed</div>
+                        <div class="fairness-value" id="seed-nonce">0</div>
+                    </div>
+
+                    <div class="input-group" style="margin-top:12px;">
+                        <label>New client seed (optional)</label>
+                        <input type="text" id="new-client-seed" placeholder="Pick anything, or leave blank for random" maxlength="64">
+                    </div>
+                    <button class="btn btn-small btn-primary" onclick="rotateSeed()">Rotate &amp; Reveal Server Seed</button>
+                    <div id="rotate-result" class="hidden"></div>
+
+                    <div id="revealed-box" class="hidden" style="margin-top:14px;">
+                        <div class="fairness-row">
+                            <div class="fairness-label">Revealed server seed</div>
+                            <div class="fairness-value" id="revealed-seed">—</div>
+                        </div>
+                        <div class="fairness-row">
+                            <div class="fairness-label">Its hash — compare to what you were shown</div>
+                            <div class="fairness-value" id="revealed-hash">—</div>
+                        </div>
+                        <div class="fairness-row">
+                            <div class="fairness-label">Client seed used</div>
+                            <div class="fairness-value" id="revealed-client">—</div>
+                        </div>
+                        <div class="fairness-row">
+                            <div class="fairness-label">Spins made on it</div>
+                            <div class="fairness-value" id="revealed-spins">0</div>
+                        </div>
+                        <div class="input-group" style="margin-top:10px;">
+                            <label>Recompute spin number</label>
+                            <input type="number" id="verify-nonce" placeholder="0" min="0">
+                        </div>
+                        <button class="btn btn-small btn-secondary" onclick="verifyRevealedSeed()">Verify That Spin</button>
+                        <div class="verify-output" id="verify-output"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Funds -->
+        <div id="deposit-view" class="hidden">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+
+            <div id="deposit-form">
+                <div class="card">
+                    <h3 style="margin-bottom:12px;">₿ Add Funds</h3>
+                    <div class="input-group">
+                        <label>Card ID</label>
+                        <input type="text" id="deposit-card-id" placeholder="Scan or enter card ID">
+                    </div>
+                    <div class="input-group">
+                        <label>Amount (USD)</label>
+                        <input type="number" id="deposit-amount" placeholder="0.00" step="0.01" min="1">
+                    </div>
+                    <div class="amount-presets">
+                        <button class="amount-preset" onclick="setDepositAmount(20)">$20</button>
+                        <button class="amount-preset" onclick="setDepositAmount(50)">$50</button>
+                        <button class="amount-preset" onclick="setDepositAmount(100)">$100</button>
+                        <button class="amount-preset" onclick="setDepositAmount(250)">$250</button>
+                    </div>
+                    <label style="display:block; margin-bottom:8px; color:#aaa; font-size:0.9rem;">Pay with</label>
+                    <div id="method-list">Loading...</div>
+                    <button class="btn btn-green" style="margin-top:12px;" onclick="submitDepositRequest()">
+                        Get Payment Details
+                    </button>
+                    <div id="deposit-error" class="error hidden"></div>
+                    <p style="color:#666; font-size:0.75rem; margin-top:12px; line-height:1.5;">
+                        You send funds directly to the house wallet — nothing is charged automatically.
+                        Points are credited once the dealer confirms the money arrived.
+                        Every $1 = 100 reward points.
+                    </p>
+                </div>
+            </div>
+
+            <div id="deposit-instructions" class="hidden"></div>
+        </div>
+
         <!-- Worker Login -->
         <div id="worker-login-view" class="hidden">
             <button class="back-btn" onclick="backToMenu()">← Back</button>
@@ -504,8 +793,22 @@
 
             <div class="tab-bar">
                 <button class="tab active" onclick="showAdminTab('actions')">Actions</button>
+                <button class="tab" onclick="showAdminTab('pending')">Deposits</button>
                 <button class="tab" onclick="showAdminTab('players')">Players</button>
                 <button class="tab" onclick="showAdminTab('register')">Register</button>
+            </div>
+
+            <div id="admin-pending" class="hidden">
+                <div class="card">
+                    <h3 style="margin-bottom:4px;">Pending Deposits</h3>
+                    <p style="color:#888; font-size:0.8rem; margin-bottom:12px;">
+                        Confirm only after you've verified the funds actually landed.
+                    </p>
+                    <div id="pending-list">Loading...</div>
+                    <div id="pending-result" class="hidden"></div>
+                    <button class="btn btn-small btn-secondary" style="margin-top:10px;"
+                            onclick="loadPendingDeposits()">↻ Refresh</button>
+                </div>
             </div>
 
             <div id="admin-actions">
@@ -563,5 +866,7 @@
     </div>
 
     <script src="/static/app.js"></script>
+    <script src="/static/slots.js"></script>
+    <script src="/static/payments.js"></script>
 </body>
 </html>
