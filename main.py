@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Depends, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Numeric, Boolean, func, desc, asc
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Numeric, Boolean, JSON, func, desc, asc
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.dialects.postgresql import JSONB
 from pydantic import BaseModel
@@ -29,7 +29,18 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://davidsino:davidsino_pass@
 ADMIN_PIN = os.getenv("ADMIN_PIN", "1234")
 WORKER_PIN = os.getenv("WORKER_PIN", "5678")
 
-engine = create_engine(DATABASE_URL)
+IS_POSTGRES = DATABASE_URL.startswith(("postgresql", "postgres"))
+
+# Postgres gets real JSONB; SQLite falls back to generic JSON so the app can be
+# run locally with `DATABASE_URL=sqlite:///./davidsino.db` and no database server.
+JSONType = JSONB if IS_POSTGRES else JSON
+
+engine = create_engine(
+    DATABASE_URL,
+    # SQLite hands each connection its own thread by default, which breaks
+    # FastAPI's threadpool. Harmless for a single-machine dev run.
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -70,7 +81,7 @@ class PlayerEvent(Base):
     cash_amount = Column(Numeric(12, 2), default=0)
     points_delta = Column(Numeric(12, 2), default=0)
     pnl_impact = Column(Numeric(12, 2), default=0)
-    metadata_json = Column(JSONB, default=dict)
+    metadata_json = Column(JSONType, default=dict)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -117,7 +128,7 @@ class PendingDeposit(Base):
     method = Column(String(30), nullable=False)
     status = Column(String(20), default="pending", nullable=False, index=True)  # pending|confirmed|cancelled
     txid = Column(String(200), nullable=True)
-    instructions_json = Column(JSONB, default=dict)  # snapshot: address/amount/rate shown to the player
+    instructions_json = Column(JSONType, default=dict)  # snapshot: address/amount/rate shown to the player
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     resolved_at = Column(DateTime, nullable=True)
 

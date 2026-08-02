@@ -8,11 +8,16 @@ Loyalty and rewards tracking system for The Davidsino.
 - Admin panel for deposits, losses, and adjustments
 - Real-time points calculation
 - PNL tracking per player
+- **Crypto deposits** — BTC/ETH/LTC/SOL/USDT/USDC with QR codes and live rates
+- **Provably fair slots** — three machines players can wager reward points on,
+  with cryptographic proof the house isn't rigging results
 
 ## Architecture
-- **Backend:** FastAPI (Python) + PostgreSQL
+- **Backend:** FastAPI (Python) + PostgreSQL (SQLite works for local dev)
 - **Frontend:** Vanilla HTML/CSS/JS (mobile-responsive)
 - **Card Reading:** USB HID readers (keyboard input) + Web NFC (Android Chrome)
+- **Slot engine:** `slots.py` — HMAC-SHA256 commit/reveal RNG, no dependencies
+- **Payments:** `payments.py` — address book + payment URIs, no custody
 
 ## Quick Start
 
@@ -28,7 +33,17 @@ To customize admin pins:
 ADMIN_PIN=9999 WORKER_PIN=4444 docker compose up -d
 ```
 
-### Option 2: Manual Setup
+### Option 2: No database server (fastest for local dev)
+
+SQLite needs no Postgres and no Docker:
+```bash
+pip install -r requirements.txt
+DATABASE_URL="sqlite:///./davidsino.db" python3 -m uvicorn main:app --reload --port 8000
+```
+Everything works except Postgres-specific JSONB indexing. Use Postgres for the
+real deployment.
+
+### Option 3: Manual Setup
 
 ### 1. Install PostgreSQL
 ```bash
@@ -81,6 +96,112 @@ Server starts on `http://0.0.0.0:8000`
 3. **Actions tab:** Deposit/deduct/adjust points
 4. **Players tab:** View all players and balances
 5. **Register tab:** Add new players
+
+## Crypto Deposits
+
+Players request a deposit in the app, send funds from their own wallet, and a
+dealer confirms receipt — which credits cash-in and **100 reward points per $1**.
+
+### Setup
+
+Paste your receive addresses into `.env` (see `.env.example`). Anything you leave
+blank simply doesn't appear in the app:
+
+| Variable | Asset | Notes |
+|---|---|---|
+| `BTC_ADDRESS` | Bitcoin | BIP-21 QR with exact amount |
+| `ETH_ADDRESS` | Ethereum | EIP-681 QR |
+| `LTC_ADDRESS` | Litecoin | BIP-21 QR |
+| `SOL_ADDRESS` | Solana | `solana:` URI |
+| `USDT_ADDRESS` | Tether | set `USDT_NETWORK` (default `TRC-20`) |
+| `USDC_ADDRESS` | USD Coin | set `USDC_NETWORK` (default `ERC-20`) |
+| `VENMO_HANDLE` | Venmo | Apple Pay / Google Pay fund these |
+| `CASHAPP_HANDLE` | Cash App | Apple Pay / Google Pay fund these |
+| `PAYPAL_ME` | PayPal | friends & family only |
+| `ZELLE_HANDLE` | Zelle | bank-app transfer |
+
+Other knobs: `MAX_DEPOSIT_USD` (default 10000), `PRICE_FEED_DISABLED=1` for an
+offline box.
+
+```bash
+BTC_ADDRESS=bc1q... VENMO_HANDLE=davidsino docker compose up -d --build
+```
+
+### The flow
+
+1. Player taps **Add Funds**, picks an amount and an asset.
+2. App shows the address, a QR encoding the **exact** coin amount, and the
+   network. USD is converted at the live CoinGecko rate (cached 2 min; if the
+   feed is down it falls back to "send $50 worth" and never blocks the deposit).
+3. Player sends from their own wallet and optionally pastes the txid.
+4. Dealer opens **Dealer Mode → Deposits**, verifies the funds landed, hits
+   **Confirm** — points are credited and a `deposit` event is logged with the
+   method, txid and rate.
+
+### About Apple Pay / Google Pay
+
+There is deliberately no direct Apple Pay or Google Pay integration. Those run on
+card rails, and every major processor (Stripe, Square, PayPal's commercial API)
+prohibits gambling transactions for unlicensed operators — an integration would
+get the account frozen. Players use Apple/Google Pay as the *funding source*
+inside Venmo or Cash App instead, which is the same tap-to-pay experience and
+lands the money in your account.
+
+### What this is not
+
+This app never holds funds, generates addresses, or moves money on its own. It's
+a ledger of transfers you confirm by hand. Check the legal position on
+real-money play where you live before pointing it at the public internet.
+
+## Provably Fair Slots
+
+Three machines, wagering **reward points only** — a spin can never touch a
+player's cash P/L.
+
+| Machine | Bet range | RTP | Hit rate | Feel |
+|---|---|---|---|---|
+| Davidsino Classic | 10 – 1,000 | 93.3% | 33% | steady, small wins |
+| Diamond Dave | 50 – 5,000 | 92.8% | 18% | dry spells, 4000× top prize |
+| Vig City | 25 – 2,500 | ~94.1% | 21% | 5 reels, 5 paylines, wild jokers |
+
+RTP for the 3-reel machines is computed by exhaustive enumeration, not sampling.
+Check any time:
+
+```bash
+python3 scripts/rtp_check.py          # RTP, house edge and hit rate per machine
+python3 tests/test_slots.py           # 31 engine tests
+python3 tests/test_payments.py        # 24 payment tests (fully offline)
+```
+
+### How players verify the house isn't cheating
+
+Every spin is derived from three values:
+
+```
+HMAC-SHA256(key = server_seed, msg = "client_seed:nonce:cursor")
+```
+
+- **server_seed** — secret, but the app shows you `sha256(server_seed)` *before*
+  you play. The house is locked in and can't swap it after seeing your bet.
+- **client_seed** — you pick it. So the house can't pre-compute a losing run
+  aimed at you.
+- **nonce** — the spin counter, incrementing 0, 1, 2…
+
+Tap **🔐 Fairness** on any machine to see the committed hash, your client seed
+and spin count. Tap **Rotate & Reveal** and the old server seed becomes public —
+then recompute any spin, either in the app or independently:
+
+```bash
+python3 scripts/verify_spin.py \
+    --server-seed <revealed seed> \
+    --client-seed <your seed> \
+    --hash <hash you were shown before playing> \
+    --machine classic --bet 100 --spins 10
+```
+
+The script confirms `sha256(revealed) == committed hash`, then prints the grids.
+If they match what you saw on screen, the results were fixed before you ever hit
+SPIN. It talks to no server — it only needs `slots.py` and Python 3.
 
 ## Production Deployment
 
@@ -145,7 +266,7 @@ server {
 - `POST /api/scan` - Scan card, get player info
 - `GET /api/health` - Health check
 
-### Admin (PIN required for mutations)
+### Admin
 - `POST /api/admin/auth` - Authenticate with PIN
 - `POST /api/admin/register` - Register new player
 - `POST /api/admin/deposit` - Add deposit/points
@@ -154,11 +275,41 @@ server {
 - `GET /api/admin/players` - List all players
 - `GET /api/admin/transactions/{id}` - Player transaction history
 
+### Payments
+- `GET /api/payments/methods` - Configured deposit methods
+- `POST /api/payments/deposit-request` - Create a pending deposit
+- `GET /api/payments/request/{id}` - Poll status
+- `POST /api/payments/request/{id}/txid` - Attach a transaction hash
+- `GET /api/payments/request/{id}/qr` - QR PNG of the payment URI
+- `GET /api/admin/pending-deposits` - Dealer queue *(needs `X-Admin-Pin`)*
+- `POST /api/admin/pending-deposits/{id}/confirm` - Credit it *(needs `X-Admin-Pin`)*
+- `POST /api/admin/pending-deposits/{id}/cancel` - Reject it *(needs `X-Admin-Pin`)*
+
+### Slots
+- `GET /api/slots/machines` - Machine list and paytables
+- `GET /api/slots/seed?card_id=` - Current fairness commitment
+- `POST /api/slots/seed/rotate` - Reveal server seed, start a new one
+- `POST /api/slots/spin` - Spin (wagers reward points)
+- `POST /api/slots/verify` - Recompute any spin from revealed values
+- `GET /api/players/{id}/slot-history` - Past spins with seed context
+
 ## Security Notes
 - Change default ADMIN_PIN in `.env`
 - For production, use HTTPS (Let's Encrypt)
 - Don't expose port 8000 directly to internet — use nginx
 - Consider adding rate limiting for production
+
+### Known gap: legacy admin endpoints are unauthenticated
+
+The original `/api/admin/*` routes (deposit, cashout, add_points,
+redeem_points, register, players) check the PIN **in the browser only** — anyone
+who can reach the port can call them directly with curl and hand themselves
+points. That predates this branch and is unchanged here.
+
+The new money-moving endpoints (`pending-deposits/*`) do require the PIN as an
+`X-Admin-Pin` header, so they can't be driven from outside the UI. Worth
+extending that dependency to the legacy routes before this is reachable from the
+open internet.
 
 ## Hardware
 - **USB RFID Reader:** Any USB HID-compatible reader (acts as keyboard)

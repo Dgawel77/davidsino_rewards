@@ -261,9 +261,12 @@ function highlightWins(data) {
             for (let c = 0; c < hit.count; c++) cells.add(`${line[c]},${c}`);
         });
     } else {
-        document.querySelectorAll('.reel-cell').forEach(cell => {
-            cells.add(`${cell.dataset.r},${cell.dataset.c}`);
-        });
+        // 3-reel: light only the repeated symbol, so a pair doesn't look like a triple
+        const row = data.grid[0];
+        const counts = {};
+        row.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+        const winner = Object.keys(counts).find(s => counts[s] >= 2);
+        row.forEach((s, c) => { if (s === winner) cells.add(`0,${c}`); });
     }
     cells.forEach(key => {
         const [r, c] = key.split(',');
