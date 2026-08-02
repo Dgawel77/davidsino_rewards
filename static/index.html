@@ -2,561 +2,1118 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Davidsino Rewards</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0B1F1A">
+    <title>The Davidsino</title>
     <style>
+        /* ============================================================
+           THE HOUSE LEDGER
+           A card room keeps a book, not a light show. Surfaces are felt,
+           type is chip bone, brass appears only where money does, and every
+           number sits in tabular mono so tallies and hashes line up.
+           ============================================================ */
+        :root {
+            --felt:      #0B1F1A;   /* table felt at night */
+            --felt-2:    #102A23;   /* raised surface */
+            --felt-3:    #17392F;   /* hairline / border */
+            --bone:      #ECE6D8;   /* chip ivory - primary text */
+            --bone-dim:  #8FA79C;   /* secondary text */
+            --bone-mute: #5D7770;   /* tertiary */
+            --brass:     #C9A227;   /* chip edge - the one accent */
+            --chip:      #4FA97F;   /* credit / up */
+            --marker:    #C4453D;   /* debit / down */
+
+            --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono",
+                    "Roboto Mono", Menlo, Consolas, monospace;
+            --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    "Helvetica Neue", Arial, sans-serif;
+
+            --rail: 172px;
+            --r: 4px;               /* the house rounds corners barely */
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { -webkit-text-size-adjust: 100%; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
+            font-family: var(--sans);
+            background: var(--felt);
+            color: var(--bone);
             min-height: 100vh;
-            padding: 16px;
+            line-height: 1.5;
+            /* faint felt weave, so the dark isn't flat */
+            background-image:
+                radial-gradient(ellipse 80% 60% at 50% -10%, #14332B 0%, transparent 70%);
+            background-attachment: fixed;
         }
-        .container { max-width: 500px; margin: 0 auto; }
-        h1 {
+
+        /* ---------- numerals behave like a ledger ---------- */
+        .num, .stat-value, .tally-value, .pay-amount, .leaderboard-value,
+        .player-list-points, .reward-cost, .bet-display, .slot-balance span,
+        .house-value, .pending-amount, .machine-bets {
+            font-family: var(--mono);
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum" 1;
+        }
+
+        .eyebrow {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+        }
+
+        /* ============================================================
+           APP SHELL - rail on desktop, bottom bar on mobile
+           ============================================================ */
+        .shell {
+            display: grid;
+            grid-template-columns: var(--rail) minmax(0, 1fr);
+            grid-template-rows: auto 1fr;
+            grid-template-areas: "brand head" "rail main";
+            min-height: 100vh;
+            max-width: 1240px;
+            margin: 0 auto;
+        }
+
+        .brand {
+            grid-area: brand;
+            padding: 20px 18px 14px;
+            border-right: 1px solid var(--felt-3);
+            border-bottom: 1px solid var(--felt-3);
+        }
+        .brand-mark {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            letter-spacing: 0.22em;
+            color: var(--brass);
+            text-transform: uppercase;
+        }
+        .brand-name {
+            font-size: 1.15rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-top: 2px;
+        }
+
+        /* ---------- header: who you are, where you stand ---------- */
+        .head {
+            grid-area: head;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 20px;
+            padding: 16px 22px;
+            border-bottom: 1px solid var(--felt-3);
+            min-height: 66px;
+        }
+        .head-empty { color: var(--bone-mute); font-size: 0.82rem; }
+        .head-player { display: flex; align-items: center; gap: 18px; }
+        .head-name { font-weight: 600; font-size: 0.95rem; }
+        .head-stat { text-align: right; }
+        .head-stat .eyebrow { display: block; margin-bottom: 1px; }
+        .head-stat-val {
+            font-family: var(--mono);
+            font-variant-numeric: tabular-nums;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        /* ---------- navigation ---------- */
+        .rail {
+            grid-area: rail;
+            border-right: 1px solid var(--felt-3);
+            padding: 14px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .rail-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 10px 12px;
+            background: none;
+            border: none;
+            border-radius: var(--r);
+            color: var(--bone-dim);
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.14s, color 0.14s;
+        }
+        .rail-item:hover { background: var(--felt-2); color: var(--bone); }
+        .rail-item.active { background: var(--felt-2); color: var(--bone); }
+        .rail-item.active .rail-glyph { color: var(--brass); }
+        .rail-glyph {
+            font-size: 0.9rem;
+            width: 16px;
             text-align: center;
-            color: #ffd700;
-            font-size: 1.8rem;
-            margin-bottom: 8px;
+            color: var(--bone-mute);
+            transition: color 0.14s;
         }
-        .subtitle { text-align: center; color: #888; margin-bottom: 24px; font-size: 0.9rem; }
+        .rail-sep {
+            height: 1px;
+            background: var(--felt-3);
+            margin: 10px 12px;
+        }
 
+        /* ---------- content ---------- */
+        .main {
+            grid-area: main;
+            padding: 24px 22px 48px;
+            min-width: 0;
+        }
+        .view-head { margin-bottom: 20px; }
+        .view-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+        }
+        .view-sub { color: var(--bone-dim); font-size: 0.87rem; margin-top: 3px; }
+
+        /* ============================================================
+           SIGNATURE: the tally bar
+           A ledger has two columns. This is both of them on one line -
+           debit left of zero, credit right, brass hairline at the middle.
+           ============================================================ */
+        .tally { width: 100%; }
+        .tally-value {
+            font-size: 2.6rem;
+            font-weight: 600;
+            letter-spacing: -0.035em;
+            line-height: 1.05;
+        }
+        .tally-value.up { color: var(--chip); }
+        .tally-value.down { color: var(--marker); }
+        .tally-value.flat { color: var(--bone-dim); }
+        .tally-track {
+            position: relative;
+            height: 8px;
+            margin-top: 12px;
+            background: var(--felt-2);
+            border-radius: 1px;
+            overflow: hidden;
+        }
+        .tally-fill {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 0;
+            transition: width 0.5s cubic-bezier(0.2, 0.7, 0.3, 1);
+        }
+        .tally-fill.up { left: 50%; background: var(--chip); }
+        .tally-fill.down { right: 50%; background: var(--marker); }
+        .tally-zero {
+            position: absolute;
+            left: 50%;
+            top: -3px;
+            bottom: -3px;
+            width: 1px;
+            background: var(--brass);
+        }
+        .tally-scale {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 6px;
+            font-family: var(--mono);
+            font-size: 0.6rem;
+            letter-spacing: 0.1em;
+            color: var(--bone-mute);
+            text-transform: uppercase;
+        }
+
+        /* ============================================================
+           SURFACES
+           ============================================================ */
         .card {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
-            border: 1px solid #0f3460;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            padding: 18px;
+            margin-bottom: 14px;
+        }
+        .card-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 14px;
         }
 
+        .grid-2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
+
+        /* ---------- buttons ---------- */
         .btn {
             display: block;
             width: 100%;
-            padding: 16px;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: bold;
+            padding: 13px 16px;
+            border: 1px solid transparent;
+            border-radius: var(--r);
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.11em;
+            text-transform: uppercase;
             cursor: pointer;
-            margin-bottom: 12px;
-            transition: opacity 0.2s;
+            margin-bottom: 10px;
+            transition: background 0.14s, border-color 0.14s, color 0.14s;
         }
-        .btn:active { opacity: 0.8; }
-        .btn-primary { background: #e94560; color: white; }
-        .btn-secondary { background: #0f3460; color: white; }
-        .btn-gold { background: #ffd700; color: #1a1a2e; }
-        .btn-green { background: #4caf50; color: white; }
-        .btn-small { padding: 10px 16px; font-size: 0.9rem; width: auto; display: inline-block; }
-
-        .input-group { margin-bottom: 16px; }
-        .input-group label {
-            display: block;
-            margin-bottom: 6px;
-            color: #aaa;
-            font-size: 0.9rem;
-        }
-        .input-group input, .input-group select {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #0f3460;
-            border-radius: 8px;
-            background: #1a1a2e;
-            color: #eee;
-            font-size: 1rem;
-        }
-        .input-group input:focus { outline: none; border-color: #e94560; }
-
-        .player-info { text-align: center; }
-        .player-name { font-size: 1.5rem; color: #ffd700; margin-bottom: 8px; }
-        .stats-row {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #0f3460;
-        }
-        .stat { text-align: center; flex: 1; }
-        .stat-value { font-size: 1.2rem; font-weight: bold; }
-        .stat-label { font-size: 0.75rem; color: #888; margin-top: 4px; }
-        .pnl-positive { color: #4caf50; }
-        .pnl-negative { color: #f44336; }
-
-        .hidden { display: none; }
-
-        .scan-status {
-            text-align: center;
-            padding: 40px 20px;
-            color: #888;
-        }
-        .scan-status.scanning { color: #ffd700; }
-        .scan-status.found { color: #4caf50; }
-        .scan-status.not-found { color: #f44336; }
-
-        .error { color: #f44336; text-align: center; margin-top: 12px; }
-        .success { color: #4caf50; text-align: center; margin-top: 12px; }
-
-        .tab-bar {
-            display: flex;
-            background: #16213e;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            overflow: hidden;
-        }
-        .tab {
-            flex: 1;
-            padding: 12px;
-            text-align: center;
-            cursor: pointer;
-            background: transparent;
-            border: none;
-            color: #888;
-            font-weight: bold;
-        }
-        .tab.active { background: #e94560; color: white; }
-
-        .player-list-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            background: #1a1a2e;
-            border-radius: 8px;
-            margin-bottom: 8px;
-        }
-        .player-list-name { font-weight: bold; }
-        .player-list-points { color: #ffd700; font-weight: bold; }
+        .btn:last-child { margin-bottom: 0; }
+        .btn-primary  { background: var(--brass); color: #12231C; }
+        .btn-primary:hover { background: #DCB537; }
+        .btn-gold     { background: var(--brass); color: #12231C; }
+        .btn-gold:hover { background: #DCB537; }
+        .btn-green    { background: var(--chip); color: #0A1F17; }
+        .btn-green:hover { background: #5FBB8E; }
+        .btn-secondary{ background: transparent; color: var(--bone); border-color: var(--felt-3); }
+        .btn-secondary:hover { background: var(--felt-3); }
+        .btn-small { padding: 9px 14px; font-size: 0.7rem; width: auto; display: inline-block; }
+        .btn:disabled { opacity: 0.45; cursor: default; }
 
         .back-btn {
             background: none;
             border: none;
-            color: #e94560;
-            font-size: 0.9rem;
-            cursor: pointer;
-            margin-bottom: 12px;
-        }
-
-        #nfc-status {
-            text-align: center;
-            padding: 8px;
-            background: #0f3460;
-            border-radius: 4px;
-            margin-bottom: 12px;
-            font-size: 0.85rem;
-        }
-
-        .reward-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 14px;
-            background: #1a1a2e;
-            border-radius: 8px;
-            margin-bottom: 8px;
-            cursor: pointer;
-            border: 2px solid transparent;
-            transition: border-color 0.2s;
-        }
-        .reward-item:active { border-color: #ffd700; }
-        .reward-name { font-weight: bold; font-size: 1rem; }
-        .reward-desc { font-size: 0.8rem; color: #888; margin-top: 2px; }
-        .reward-cost { color: #ffd700; font-weight: bold; font-size: 1.1rem; }
-
-        /* Roast card */
-        .roast-card {
-            background: linear-gradient(135deg, #2d1b4e, #1a1a2e);
-            border: 2px solid #ffd700;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-            text-align: center;
-        }
-        .roast-label {
-            font-size: 0.75rem;
-            color: #ffd700;
+            color: var(--bone-dim);
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 8px;
+            cursor: pointer;
+            margin-bottom: 14px;
+            padding: 4px 0;
         }
-        .roast-text {
-            font-size: 1rem;
-            font-style: italic;
-            color: #eee;
-            line-height: 1.4;
-        }
+        .back-btn:hover { color: var(--bone); }
 
-        /* History table */
-        .history-table {
+        /* ---------- inputs ---------- */
+        .input-group { margin-bottom: 14px; }
+        .input-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--mono);
+            font-size: 0.64rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+        }
+        .input-group input, .input-group select {
             width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
+            padding: 11px 12px;
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            background: var(--felt);
+            color: var(--bone);
+            font-family: var(--mono);
+            font-size: 0.9rem;
         }
-        .history-table th {
-            text-align: left;
-            padding: 8px 6px;
-            background: #0f3460;
-            color: #aaa;
-            font-weight: bold;
-            font-size: 0.75rem;
+        .input-group input::placeholder { color: var(--bone-mute); }
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: var(--brass);
         }
-        .history-table td {
-            padding: 8px 6px;
-            border-bottom: 1px solid #0f3460;
-        }
-        .history-table tr:last-child td { border-bottom: none; }
-        .event-deposit { color: #4caf50; }
-        .event-cashout { color: #2196f3; }
-        .event-reward_add { color: #ff9800; }
-        .event-reward_redeem { color: #9c27b0; }
-        .event-registration { color: #888; }
 
-        /* Daily PNL chart */
-        .chart-container {
-            margin-top: 16px;
-            padding: 12px;
-            background: #1a1a2e;
-            border-radius: 8px;
+        :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+        .hidden { display: none !important; }
+
+        /* ---------- tabs ---------- */
+        .tab-bar {
+            display: flex;
+            gap: 2px;
+            border-bottom: 1px solid var(--felt-3);
+            margin-bottom: 16px;
             overflow-x: auto;
         }
+        .tab {
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--bone-mute);
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .tab:hover { color: var(--bone-dim); }
+        .tab.active { color: var(--brass); border-bottom-color: var(--brass); }
+
+        /* ---------- feedback ---------- */
+        .error, .success {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            padding: 10px 12px;
+            border-radius: var(--r);
+            margin-top: 10px;
+            white-space: pre-line;
+        }
+        .error   { color: var(--marker); background: rgba(196,69,61,0.09); border: 1px solid rgba(196,69,61,0.3); }
+        .success { color: var(--chip);   background: rgba(79,169,127,0.09); border: 1px solid rgba(79,169,127,0.3); }
+
+        /* ============================================================
+           SCAN
+           ============================================================ */
+        #nfc-status {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            letter-spacing: 0.06em;
+            color: var(--bone-mute);
+            padding: 8px 12px;
+            border: 1px dashed var(--felt-3);
+            border-radius: var(--r);
+            margin-bottom: 14px;
+        }
+        .scan-status {
+            text-align: center;
+            padding: 34px 16px;
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            letter-spacing: 0.08em;
+            color: var(--bone-mute);
+        }
+        .scan-status.scanning { color: var(--brass); }
+        .scan-status.found { color: var(--chip); }
+        .scan-status.not-found { color: var(--marker); }
+
+        .player-name {
+            font-size: 1.6rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            margin-bottom: 2px;
+        }
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 14px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--felt-3);
+        }
+        .stat { min-width: 0; }
+        .stat-value { font-size: 1.15rem; font-weight: 600; }
+        .stat-label {
+            font-family: var(--mono);
+            font-size: 0.6rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            margin-top: 3px;
+        }
+        .pnl-positive { color: var(--chip); }
+        .pnl-negative { color: var(--marker); }
+
+        /* ---------- the marker slip (roast) ---------- */
+        .roast-card {
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-left: 2px solid var(--marker);
+            border-radius: var(--r);
+            padding: 16px 18px;
+            margin-bottom: 14px;
+        }
+        .roast-label {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--marker);
+            margin-bottom: 8px;
+        }
+        .roast-text { font-size: 1rem; font-style: italic; color: var(--bone); }
+
+        /* ---------- history tape ---------- */
+        .history-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .history-table th {
+            text-align: left;
+            padding: 9px 10px;
+            font-family: var(--mono);
+            font-size: 0.6rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            border-bottom: 1px solid var(--felt-3);
+            font-weight: 500;
+        }
+        .history-table td {
+            padding: 10px;
+            border-bottom: 1px solid var(--felt-3);
+            vertical-align: top;
+        }
+        .history-table tr:last-child td { border-bottom: none; }
+        .history-table td:last-child {
+            text-align: right;
+            font-family: var(--mono);
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .event-deposit { color: var(--chip); }
+        .event-cashout { color: var(--brass); }
+        .event-reward_add { color: var(--bone-dim); }
+        .event-reward_redeem { color: var(--bone-dim); }
+        .event-registration { color: var(--bone-mute); }
+        .event-slot_spin { color: var(--bone-dim); }
+
+        /* ---------- daily chart ---------- */
+        .chart-container { padding: 8px 0 0; overflow-x: auto; }
         .chart-bar-container {
             display: flex;
             align-items: flex-end;
-            height: 120px;
-            gap: 4px;
+            height: 130px;
+            gap: 5px;
             min-width: 100%;
-            padding-bottom: 20px;
-            position: relative;
+            padding-bottom: 22px;
         }
-        .chart-bar {
-            flex: 1;
-            min-width: 20px;
-            border-radius: 3px 3px 0 0;
-            position: relative;
+        .chart-bar { flex: 1; min-width: 18px; border-radius: 1px; position: relative; }
+        .chart-bar-positive { background: var(--chip); }
+        .chart-bar-negative { background: var(--marker); }
+        .chart-bar-label, .chart-bar-value {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: var(--mono);
+            font-size: 0.58rem;
+            white-space: nowrap;
+        }
+        .chart-bar-label { bottom: -19px; color: var(--bone-mute); }
+        .chart-bar-value { top: -16px; color: var(--bone-dim); }
+
+        /* ============================================================
+           LEADERBOARD
+           ============================================================ */
+        .house-summary {
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .house-label {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            margin-bottom: 6px;
+        }
+        .house-value { font-size: 2rem; font-weight: 600; letter-spacing: -0.03em; }
+
+        .leaderboard-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            margin-bottom: 6px;
+        }
+        .leaderboard-item.rank-1 { border-left: 2px solid var(--brass); }
+        .leaderboard-item.rank-2 { border-left: 2px solid #9BA8A2; }
+        .leaderboard-item.rank-3 { border-left: 2px solid #8A6A3B; }
+        .leaderboard-rank {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--bone-mute);
+            width: 28px;
+        }
+        .leaderboard-name { flex: 1; font-weight: 600; min-width: 0; }
+        .leaderboard-value { font-size: 0.95rem; font-weight: 600; }
+
+        /* ============================================================
+           SLOTS
+           ============================================================ */
+        .machine-item {
+            padding: 16px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            margin-bottom: 10px;
             cursor: pointer;
+            transition: border-color 0.14s, background 0.14s;
         }
-        .chart-bar-positive { background: #4caf50; }
-        .chart-bar-negative { background: #f44336; }
-        .chart-bar-label {
-            position: absolute;
-            bottom: -18px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 0.6rem;
-            color: #888;
-            white-space: nowrap;
-        }
-        .chart-bar-value {
-            position: absolute;
-            top: -16px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 0.6rem;
-            color: #eee;
-            white-space: nowrap;
+        .machine-item:hover { border-color: var(--brass); }
+        .machine-name { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.02em; }
+        .machine-tagline { font-size: 0.84rem; color: var(--bone-dim); margin-top: 3px; }
+        .machine-bets {
+            font-size: 0.66rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            margin-top: 10px;
         }
 
-        /* Leaderboard */
-        .leaderboard-item {
+        .slot-stage { text-align: center; }
+        .slot-balance {
+            font-family: var(--mono);
+            font-size: 0.66rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            margin: 10px 0 0;
+        }
+        .slot-balance span { color: var(--brass); font-size: 1.05rem; margin-left: 6px; }
+
+        .reel-area { display: flex; justify-content: center; gap: 6px; margin: 20px 0 14px; }
+        .reel-col { display: flex; flex-direction: column; gap: 6px; }
+        .reel-cell {
+            width: 58px;
+            height: 58px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.9rem;
+            background: var(--felt);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+        }
+        .reel-cell.spinning { animation: reelblur 0.14s linear infinite; }
+        .reel-cell.win-cell { border-color: var(--brass); background: rgba(201,162,39,0.09); }
+        @keyframes reelblur { 50% { opacity: 0.55; } }
+
+        .spin-result {
+            min-height: 24px;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            letter-spacing: 0.05em;
+            margin-bottom: 14px;
+        }
+        .spin-result.win { color: var(--brass); }
+        .spin-result.lose { color: var(--bone-mute); }
+
+        .bet-row {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+        .bet-adjust {
+            width: 42px;
+            height: 42px;
+            border-radius: var(--r);
+            border: 1px solid var(--felt-3);
+            background: transparent;
+            color: var(--bone);
+            font-size: 1.2rem;
+            cursor: pointer;
+        }
+        .bet-adjust:hover { border-color: var(--brass); }
+        .bet-display { min-width: 108px; }
+        .bet-display span:first-child {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--brass);
+        }
+        .bet-label {
+            display: block;
+            font-family: var(--mono);
+            font-size: 0.58rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+            margin-top: 2px;
+        }
+        .slot-actions { display: flex; gap: 8px; }
+        .slot-actions .btn { margin-bottom: 0; }
+
+        .paytable { margin-top: 16px; text-align: left; }
+        .paytable-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--felt-3);
+            font-size: 0.85rem;
+        }
+        .paytable-row span:last-child {
+            font-family: var(--mono);
+            font-variant-numeric: tabular-nums;
+            color: var(--brass);
+            white-space: nowrap;
+        }
+        .paytable-note { color: var(--bone-mute); font-size: 0.75rem; margin-top: 10px; }
+
+        /* ---------- fairness ---------- */
+        .fairness-panel { margin-top: 16px; text-align: left; }
+        .fairness-explainer {
+            background: var(--felt);
+            border: 1px solid var(--felt-3);
+            border-left: 2px solid var(--brass);
+            border-radius: var(--r);
+            padding: 14px;
+            color: var(--bone-dim);
+            font-size: 0.83rem;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .fairness-explainer strong { color: var(--bone); }
+        .fairness-explainer code {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            color: var(--brass);
+            word-break: break-all;
+        }
+        .fairness-row { padding: 9px 0; border-bottom: 1px solid var(--felt-3); }
+        .fairness-label {
+            font-family: var(--mono);
+            font-size: 0.6rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+        }
+        .fairness-value {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--bone);
+            word-break: break-all;
+            margin-top: 3px;
+        }
+        .verify-output {
+            background: var(--felt);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            padding: 12px;
+            margin-top: 10px;
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--chip);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* ============================================================
+           DEPOSITS
+           ============================================================ */
+        .method-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            background: var(--felt);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.14s;
+        }
+        .method-item:hover { border-color: var(--bone-mute); }
+        .method-item.selected { border-color: var(--brass); background: rgba(201,162,39,0.07); }
+        .method-icon {
+            width: 34px;
+            height: 34px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            font-family: var(--mono);
+            font-size: 1rem;
+            color: var(--brass);
+        }
+        .method-label { font-weight: 600; font-size: 0.9rem; }
+        .method-sub {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--bone-mute);
+            letter-spacing: 0.04em;
+        }
+
+        .amount-presets { display: flex; gap: 6px; margin-bottom: 16px; }
+        .amount-preset {
+            flex: 1;
+            padding: 10px 6px;
+            border: 1px solid var(--felt-3);
+            background: var(--felt);
+            color: var(--bone-dim);
+            border-radius: var(--r);
+            cursor: pointer;
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+        .amount-preset:hover { border-color: var(--brass); color: var(--brass); }
+
+        .pay-label {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--bone-mute);
+        }
+        .pay-amount {
+            font-size: 1.9rem;
+            font-weight: 600;
+            color: var(--brass);
+            letter-spacing: -0.03em;
+            margin: 8px 0 2px;
+            word-break: break-all;
+        }
+        .pay-amount-sub {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--bone-dim);
+            margin-bottom: 16px;
+        }
+        .pay-qr {
+            width: 176px;
+            height: 176px;
+            background: #fff;
+            padding: 9px;
+            border-radius: var(--r);
+            margin: 4px auto 14px;
+            display: block;
+        }
+        .pay-address {
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            background: var(--felt);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            padding: 11px;
+            word-break: break-all;
+            margin-bottom: 10px;
+            text-align: left;
+        }
+        .pay-network {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--marker);
+            margin-top: 10px;
+        }
+        .pay-note { font-size: 0.84rem; color: var(--bone-dim); margin: 12px 0; }
+
+        /* ---------- dealer queue ---------- */
+        .pending-item {
+            padding: 14px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-left: 2px solid var(--brass);
+            border-radius: var(--r);
+            margin-bottom: 10px;
+        }
+        .pending-head { display: flex; justify-content: space-between; gap: 12px; }
+        .pending-player { font-weight: 600; }
+        .pending-meta {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--bone-mute);
+            margin-top: 2px;
+        }
+        .pending-amount { font-size: 1.1rem; font-weight: 600; color: var(--chip); }
+        .pending-txid {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--bone-dim);
+            margin-top: 8px;
+            word-break: break-all;
+        }
+        .pending-actions { display: flex; gap: 8px; margin-top: 12px; }
+        .pending-actions .btn { flex: 1; margin-bottom: 0; }
+
+        /* ---------- lists ---------- */
+        .player-list-item, .reward-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px;
-            background: #1a1a2e;
-            border-radius: 8px;
-            margin-bottom: 8px;
-            border-left: 3px solid #0f3460;
+            gap: 12px;
+            padding: 12px 14px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            margin-bottom: 6px;
         }
-        .leaderboard-item.rank-1 { border-left-color: #ffd700; }
-        .leaderboard-item.rank-2 { border-left-color: #c0c0c0; }
-        .leaderboard-item.rank-3 { border-left-color: #cd7f32; }
-        .leaderboard-rank {
-            font-weight: bold;
-            font-size: 1.1rem;
-            width: 30px;
-            color: #ffd700;
-        }
-        .leaderboard-name { flex: 1; font-weight: bold; margin-left: 8px; }
-        .leaderboard-value { text-align: right; font-size: 0.9rem; }
-        .house-summary {
+        .reward-item { cursor: pointer; transition: border-color 0.14s; }
+        .reward-item:hover { border-color: var(--brass); }
+        .player-list-name, .reward-name { font-weight: 600; font-size: 0.92rem; }
+        .reward-desc { font-size: 0.78rem; color: var(--bone-dim); margin-top: 2px; }
+        .player-list-points, .reward-cost { color: var(--brass); font-weight: 600; }
+
+        .empty {
             text-align: center;
-            padding: 16px;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            border-radius: 8px;
-            margin-bottom: 16px;
-            border: 1px solid #ffd700;
+            padding: 28px 16px;
+            color: var(--bone-mute);
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            letter-spacing: 0.06em;
         }
-        .house-label { font-size: 0.8rem; color: #ffd700; text-transform: uppercase; }
-        .house-value { font-size: 1.5rem; font-weight: bold; margin-top: 4px; }
+        .fine { color: var(--bone-mute); font-size: 0.76rem; line-height: 1.55; }
 
-        /* ===== Slots ===== */
-        .machine-item {
-            padding: 14px;
-            background: #1a1a2e;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            border: 2px solid transparent;
-            transition: border-color 0.2s;
-        }
-        .machine-item:active { border-color: #ffd700; }
-        .machine-name { font-size: 1.25rem; color: #ffd700; font-weight: bold; }
-        .machine-tagline { font-size: 0.8rem; color: #888; margin-top: 2px; }
-        .machine-bets { font-size: 0.75rem; color: #666; margin-top: 6px; }
+        /* ============================================================
+           RESPONSIVE - rail becomes a bottom bar
+           ============================================================ */
+        @media (max-width: 899px) {
+            .shell {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr auto;
+                grid-template-areas: "head" "main" "rail";
+            }
+            .brand { display: none; }
+            .head {
+                justify-content: space-between;
+                padding: 12px 16px;
+                position: sticky;
+                top: 0;
+                z-index: 20;
+                background: var(--felt);
+                min-height: 58px;
+            }
+            .head::before {
+                content: "DAVIDSINO";
+                font-family: var(--mono);
+                font-size: 0.68rem;
+                letter-spacing: 0.2em;
+                color: var(--brass);
+                flex-shrink: 0;
+            }
+            .head-player { gap: 14px; }
+            .head-name { display: none; }
+            .main { padding: 18px 16px 96px; }
 
-        .slot-balance { margin: 10px 0; color: #aaa; font-size: 0.9rem; }
-        .slot-balance span { color: #ffd700; font-weight: bold; font-size: 1.1rem; }
+            .rail {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 30;
+                flex-direction: row;
+                gap: 0;
+                padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+                background: var(--felt-2);
+                border-right: none;
+                border-top: 1px solid var(--felt-3);
+            }
+            .rail-item {
+                flex: 1;
+                flex-direction: column;
+                gap: 3px;
+                padding: 7px 2px;
+                font-size: 0.55rem;
+                letter-spacing: 0.08em;
+                text-align: center;
+                min-width: 0;
+            }
+            .rail-glyph { width: auto; font-size: 1.05rem; }
+            .rail-sep { display: none; }
 
-        .reel-area { display: flex; justify-content: center; gap: 6px; margin: 16px 0; }
-        .reel-col { display: flex; flex-direction: column; gap: 6px; }
-        .reel-cell {
-            width: 56px; height: 56px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.9rem;
-            background: #1a1a2e;
-            border: 2px solid #0f3460;
-            border-radius: 8px;
-        }
-        .reel-cell.spinning { animation: reelblur 0.14s linear infinite; }
-        .reel-cell.win-cell { border-color: #ffd700; box-shadow: 0 0 12px rgba(255,215,0,0.5); }
-        @keyframes reelblur { 50% { filter: blur(2px); opacity: 0.75; } }
-
-        .spin-result { min-height: 26px; font-weight: bold; margin-bottom: 8px; font-size: 0.95rem; }
-        .spin-result.win { color: #ffd700; animation: winpulse 0.45s ease 2; }
-        .spin-result.lose { color: #888; }
-        @keyframes winpulse { 50% { transform: scale(1.12); } }
-
-        .bet-row { display: flex; justify-content: center; align-items: center; gap: 14px; margin-bottom: 12px; }
-        .bet-adjust {
-            width: 44px; height: 44px; border-radius: 50%; border: none;
-            background: #0f3460; color: #fff; font-size: 1.4rem; cursor: pointer;
-        }
-        .bet-adjust:active { background: #e94560; }
-        .bet-display { min-width: 100px; font-weight: bold; color: #ffd700; font-size: 1.1rem; }
-        .bet-label { font-size: 0.7rem; color: #888; display: block; font-weight: normal; }
-
-        .paytable { margin-top: 12px; text-align: left; font-size: 0.85rem; }
-        .paytable-row {
-            display: flex; justify-content: space-between;
-            padding: 5px 8px; border-bottom: 1px solid #0f3460;
-        }
-        .paytable-note { color: #888; font-size: 0.75rem; margin-top: 8px; padding: 0 8px; }
-
-        /* Provable fairness */
-        .fairness-panel { margin-top: 12px; text-align: left; font-size: 0.8rem; }
-        .fairness-row { padding: 6px 0; border-bottom: 1px solid #0f3460; }
-        .fairness-label { color: #888; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        .fairness-value {
-            color: #eee; font-family: monospace; font-size: 0.72rem;
-            word-break: break-all; margin-top: 2px;
-        }
-        .fairness-explainer {
-            background: #1a1a2e; border-left: 3px solid #ffd700;
-            padding: 10px; border-radius: 4px; color: #aaa;
-            font-size: 0.78rem; line-height: 1.5; margin-bottom: 12px;
-        }
-        .verify-output {
-            background: #0d0d1a; border-radius: 6px; padding: 10px; margin-top: 8px;
-            font-family: monospace; font-size: 0.75rem; color: #4caf50;
-            white-space: pre-wrap; word-break: break-all;
+            .view-title { font-size: 1.25rem; }
+            .tally-value { font-size: 2.1rem; }
+            .reel-cell { width: 50px; height: 50px; font-size: 1.6rem; }
+            .stats-row { gap: 10px; }
         }
 
-        /* ===== Deposits ===== */
-        .method-item {
-            display: flex; align-items: center; gap: 12px;
-            padding: 12px; background: #1a1a2e; border-radius: 8px;
-            margin-bottom: 8px; cursor: pointer;
-            border: 2px solid transparent; transition: border-color 0.15s;
+        @media (max-width: 380px) {
+            .reel-cell { width: 42px; height: 42px; font-size: 1.35rem; }
+            .rail-item { font-size: 0.5rem; }
         }
-        .method-item.selected { border-color: #ffd700; background: #1f1f3a; }
-        .method-icon {
-            width: 38px; height: 38px; flex-shrink: 0;
-            display: flex; align-items: center; justify-content: center;
-            background: #0f3460; border-radius: 50%; font-size: 1.2rem; color: #ffd700;
-        }
-        .method-label { font-weight: bold; }
-        .method-sub { font-size: 0.75rem; color: #888; }
 
-        .amount-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-        .amount-preset {
-            flex: 1; min-width: 60px; padding: 10px; border: 1px solid #0f3460;
-            background: #1a1a2e; color: #eee; border-radius: 8px; cursor: pointer;
-            font-weight: bold;
+        /* two-up on wide screens where it genuinely helps */
+        @media (min-width: 900px) {
+            .grid-2 { grid-template-columns: 1fr 1fr; align-items: start; }
+            .grid-2 > * { margin-bottom: 0; }
+            .stats-row { grid-template-columns: repeat(4, 1fr); }
+            .slot-stage { max-width: 560px; margin: 0 auto; }
         }
-        .amount-preset:active { border-color: #ffd700; color: #ffd700; }
 
-        .pay-label { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-        .pay-amount { font-size: 1.6rem; color: #ffd700; font-weight: bold; margin: 6px 0 2px; word-break: break-all; }
-        .pay-amount-sub { font-size: 0.8rem; color: #888; margin-bottom: 12px; }
-        .pay-qr {
-            width: 180px; height: 180px; background: #fff;
-            padding: 8px; border-radius: 8px; margin: 8px auto; display: block;
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
-        .pay-address {
-            font-family: monospace; font-size: 0.75rem; color: #eee;
-            background: #1a1a2e; padding: 10px; border-radius: 6px;
-            word-break: break-all; margin: 10px 0;
-        }
-        .pay-network { font-size: 0.8rem; color: #e94560; margin-top: 8px; }
-        .pay-note { font-size: 0.8rem; color: #aaa; margin: 10px 0; line-height: 1.4; }
-
-        /* Dealer pending queue */
-        .pending-item {
-            padding: 12px; background: #1a1a2e; border-radius: 8px;
-            margin-bottom: 10px; border-left: 3px solid #ffd700;
-        }
-        .pending-head { display: flex; justify-content: space-between; align-items: flex-start; }
-        .pending-player { font-weight: bold; }
-        .pending-meta { font-size: 0.75rem; color: #888; margin-top: 2px; }
-        .pending-amount { color: #4caf50; font-weight: bold; font-size: 1.1rem; }
-        .pending-txid {
-            font-family: monospace; font-size: 0.7rem; color: #2196f3;
-            margin-top: 6px; word-break: break-all;
-        }
-        .pending-actions { display: flex; gap: 8px; margin-top: 10px; }
-        .pending-actions .btn { flex: 1; margin-bottom: 0; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎰 Davidsino</h1>
-        <p class="subtitle">Rewards & Loyalty Program</p>
+<div class="shell">
 
-        <div id="nfc-status" class="hidden"></div>
+    <div class="brand">
+        <div class="brand-mark">Est. Tonight</div>
+        <div class="brand-name">The Davidsino</div>
+    </div>
 
-        <!-- Main Menu -->
+    <header class="head">
+        <div id="head-empty" class="head-empty">No card on file</div>
+        <div id="head-player" class="head-player hidden">
+            <div class="head-name" id="head-name"></div>
+            <div class="head-stat">
+                <span class="eyebrow">Points</span>
+                <span class="head-stat-val" id="head-points">0</span>
+            </div>
+            <div class="head-stat">
+                <span class="eyebrow">Standing</span>
+                <span class="head-stat-val" id="head-pnl">$0.00</span>
+            </div>
+        </div>
+    </header>
+
+    <nav class="rail">
+        <button class="rail-item" data-nav="scan-view" onclick="startScan()">
+            <span class="rail-glyph">◈</span><span>Scan</span></button>
+        <button class="rail-item" data-nav="slots-lobby-view" onclick="showSlotsLobby()">
+            <span class="rail-glyph">▦</span><span>Slots</span></button>
+        <button class="rail-item" data-nav="deposit-view" onclick="showDeposit()">
+            <span class="rail-glyph">₿</span><span>Funds</span></button>
+        <button class="rail-item" data-nav="leaderboard-view" onclick="showLeaderboard()">
+            <span class="rail-glyph">▲</span><span>Board</span></button>
+        <div class="rail-sep"></div>
+        <button class="rail-item" data-nav="worker-view" onclick="showWorkerLogin()">
+            <span class="rail-glyph">◍</span><span>Bar</span></button>
+        <button class="rail-item" data-nav="admin-view" onclick="showAdminLogin()">
+            <span class="rail-glyph">✦</span><span>Dealer</span></button>
+    </nav>
+
+    <main class="main">
+
+        <!-- ===== Menu / home ===== -->
         <div id="menu-view">
-            <div class="card">
-                <button class="btn btn-gold" onclick="startScan()">📱 Scan Card</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    Tap your card or use NFC reader
-                </p>
+            <div class="view-head">
+                <div class="view-title">Where you stand</div>
+                <div class="view-sub">Scan your card to pull up your book.</div>
             </div>
-            <div class="card">
-                <button class="btn btn-gold" onclick="showSlotsLobby()">🎰 Play Slots</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    Provably fair · wager your reward points
-                </p>
-            </div>
-            <div class="card">
-                <button class="btn btn-green" onclick="showDeposit()">₿ Add Funds</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    Crypto, Venmo, Cash App
-                </p>
-            </div>
-            <div class="card">
-                <button class="btn btn-secondary" onclick="showLeaderboard()">🏆 Leaderboard</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    See who's winning (and losing)
-                </p>
-            </div>
-            <div class="card">
-                <button class="btn btn-green" onclick="showWorkerLogin()">🍸 Worker Mode</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    Redeem points for rewards
-                </p>
-            </div>
-            <div class="card">
-                <button class="btn btn-primary" onclick="showAdminLogin()">🔐 Dealer Mode</button>
-                <p style="text-align:center; color:#888; font-size:0.85rem; margin-top:8px;">
-                    Manage deposits, PNL, players
-                </p>
+            <div id="nfc-status" class="hidden"></div>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-title">Start here</div>
+                    <button class="btn btn-gold" onclick="startScan()">Scan card</button>
+                    <button class="btn btn-secondary" onclick="showLeaderboard()">See the board</button>
+                    <p class="fine" style="margin-top:12px;">
+                        Tap an RFID card to the reader, or look yourself up by name on the scan screen.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-title">Play or pay</div>
+                    <button class="btn btn-secondary" onclick="showSlotsLobby()">Play slots</button>
+                    <button class="btn btn-green" onclick="showDeposit()">Add funds</button>
+                    <p class="fine" style="margin-top:12px;">
+                        Slots wager reward points and never touch your cash standing.
+                        Deposits credit 100 points per dollar once the dealer confirms them.
+                    </p>
+                </div>
             </div>
         </div>
 
-        <!-- Scan Result View -->
+        <!-- ===== Scan ===== -->
         <div id="scan-view" class="hidden">
-            <div class="card">
-                <div id="scan-status" class="scan-status">
-                    Hold card to reader or tap NFC...
-                </div>
+            <div class="view-head">
+                <div class="view-title">Scan</div>
+                <div class="view-sub">Hold a card to the reader, or search below.</div>
             </div>
+
+            <div class="card">
+                <div id="scan-status" class="scan-status">Waiting for a card…</div>
+            </div>
+
             <div id="player-result" class="hidden">
-                <div class="card player-info">
+                <div class="card">
                     <div class="player-name" id="result-name"></div>
-                    <div class="stats-row" style="border-top:none; margin-top:0; padding-top:0;">
-                        <div class="stat">
-                            <div class="stat-value" id="result-points" style="color:#ffd700;">0</div>
-                            <div class="stat-label">Reward Points</div>
+                    <span class="eyebrow">Net standing</span>
+                    <div id="result-tally" class="tally" style="margin-top:8px;">
+                        <div class="tally-value flat" id="result-pnl">$0.00</div>
+                        <div class="tally-track">
+                            <div class="tally-fill"></div>
+                            <div class="tally-zero"></div>
                         </div>
-                        <div class="stat">
-                            <div class="stat-value" id="result-pnl">$0</div>
-                            <div class="stat-label">Net P/L</div>
-                        </div>
+                        <div class="tally-scale"><span>Down</span><span>Even</span><span>Up</span></div>
                     </div>
                     <div class="stats-row">
                         <div class="stat">
+                            <div class="stat-value" id="result-points" style="color:var(--brass);">0</div>
+                            <div class="stat-label">Points</div>
+                        </div>
+                        <div class="stat">
                             <div class="stat-value" id="result-cashin">$0</div>
-                            <div class="stat-label">Cash In</div>
+                            <div class="stat-label">Bought in</div>
                         </div>
                         <div class="stat">
                             <div class="stat-value" id="result-cashout">$0</div>
-                            <div class="stat-label">Cash Out</div>
+                            <div class="stat-label">Cashed out</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value" id="result-net-label" style="color:var(--bone-dim);">—</div>
+                            <div class="stat-label">Verdict</div>
                         </div>
                     </div>
                 </div>
-                <button class="btn btn-gold" onclick="showSummary()">📊 View Full Summary</button>
-                <button class="btn btn-gold" onclick="showSlotsLobby()">🎰 Play Slots</button>
-                <button class="btn btn-green" onclick="showDeposit()">₿ Add Funds</button>
-                <button class="btn btn-secondary" onclick="backToMenu()">← Back</button>
-            </div>
-            <div id="unregistered-result" class="hidden">
-                <div class="card" style="text-align:center;">
-                    <p style="color:#f44336;">Card not registered</p>
-                    <p style="color:#888; font-size:0.85rem; margin-top:8px;">See dealer to register</p>
+                <div class="grid-2">
+                    <button class="btn btn-secondary" onclick="showSummary()">Open full book</button>
+                    <button class="btn btn-gold" onclick="showSlotsLobby()">Play slots</button>
                 </div>
-                <button class="btn btn-secondary" onclick="backToMenu()">← Back</button>
             </div>
-            
-            <!-- Manual Search Section -->
-            <div class="card" style="margin-top: 16px;">
-                <h3 style="margin-bottom: 12px; font-size: 1rem;">🔍 Look Up Player</h3>
+
+            <div id="unregistered-result" class="hidden">
+                <div class="card">
+                    <div class="empty" style="color:var(--marker);">Card not on file</div>
+                    <p class="fine" style="text-align:center;">See the dealer to get registered.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Look someone up</div>
                 <div class="input-group">
-                    <label>Search by Name or Card ID</label>
-                    <input type="text" id="search-input" placeholder="Enter name or card ID" onkeypress="if(event.key==='Enter') searchPlayers()">
+                    <label for="search-input">Name or card ID</label>
+                    <input type="text" id="search-input" placeholder="e.g. David"
+                           onkeypress="if(event.key==='Enter') searchPlayers()">
                 </div>
                 <button class="btn btn-small btn-secondary" onclick="searchPlayers()">Search</button>
-                <div id="search-results" style="margin-top: 12px;"></div>
+                <div id="search-results" style="margin-top:12px;"></div>
             </div>
         </div>
 
-        <!-- Summary View -->
+        <!-- ===== Summary ===== -->
         <div id="summary-view" class="hidden">
-            <button class="back-btn" onclick="backToScan()">← Back to Scan</button>
+            <button class="back-btn" onclick="backToScan()">← Back</button>
+            <div class="view-head">
+                <div class="view-title" id="summary-name">Player</div>
+                <div class="view-sub">Every entry in the book, newest first.</div>
+            </div>
+
             <div id="summary-roast" class="roast-card hidden">
-                <div class="roast-label">🎰 Vig Says</div>
+                <div class="roast-label">The vig says</div>
                 <div class="roast-text" id="roast-text"></div>
             </div>
-            <div class="card player-info">
-                <div class="player-name" id="summary-name"></div>
-                <div class="stats-row" style="border-top:none; margin-top:0; padding-top:0;">
-                    <div class="stat">
-                        <div class="stat-value" id="summary-points" style="color:#ffd700;">0</div>
-                        <div class="stat-label">Reward Points</div>
+
+            <div class="card">
+                <span class="eyebrow">Net standing</span>
+                <div id="summary-tally" class="tally" style="margin-top:8px;">
+                    <div class="tally-value flat" id="summary-pnl">$0.00</div>
+                    <div class="tally-track">
+                        <div class="tally-fill"></div>
+                        <div class="tally-zero"></div>
                     </div>
+                    <div class="tally-scale"><span>Down</span><span>Even</span><span>Up</span></div>
+                </div>
+                <div class="stats-row" style="grid-template-columns:1fr;">
                     <div class="stat">
-                        <div class="stat-value" id="summary-pnl">$0</div>
-                        <div class="stat-label">Net P/L</div>
+                        <div class="stat-value" id="summary-points" style="color:var(--brass);">0</div>
+                        <div class="stat-label">Reward points</div>
                     </div>
                 </div>
             </div>
 
             <div class="tab-bar">
                 <button class="tab active" onclick="showSummaryTab('history')">History</button>
-                <button class="tab" onclick="showSummaryTab('daily')">Daily P/L</button>
+                <button class="tab" onclick="showSummaryTab('daily')">By day</button>
             </div>
 
             <div id="summary-history">
-                <div class="card" style="padding: 0; overflow-x: auto;">
+                <div class="card" style="padding:6px 14px;">
                     <table class="history-table">
                         <thead>
-                            <tr>
-                                <th>Type</th>
-                                <th>Details</th>
-                                <th style="text-align:right;">Change</th>
-                            </tr>
+                            <tr><th>Entry</th><th>Detail</th><th style="text-align:right;">Change</th></tr>
                         </thead>
                         <tbody id="history-body">
-                            <tr><td colspan="3" style="text-align:center; color:#888;">Loading...</td></tr>
+                            <tr><td colspan="3" class="empty">Loading…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -564,7 +1121,7 @@
 
             <div id="summary-daily" class="hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 8px; font-size: 1rem;">Daily P/L</h3>
+                    <div class="card-title">Daily result</div>
                     <div class="chart-container">
                         <div class="chart-bar-container" id="daily-chart"></div>
                     </div>
@@ -572,87 +1129,102 @@
             </div>
         </div>
 
-        <!-- Leaderboard View -->
+        <!-- ===== Leaderboard ===== -->
         <div id="leaderboard-view" class="hidden">
-            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="view-head">
+                <div class="view-title">The board</div>
+                <div class="view-sub">Everyone's standing, including the house.</div>
+            </div>
+
             <div class="house-summary">
-                <div class="house-label">The House Is</div>
-                <div class="house-value" id="house-pnl">Loading...</div>
+                <div class="house-label">The house is</div>
+                <div class="house-value" id="house-pnl">—</div>
+                <div id="house-tally" class="tally" style="margin-top:10px;">
+                    <div class="tally-track">
+                        <div class="tally-fill"></div>
+                        <div class="tally-zero"></div>
+                    </div>
+                    <div class="tally-scale"><span>Down</span><span>Even</span><span>Up</span></div>
+                </div>
             </div>
+
             <div class="tab-bar">
-                <button class="tab active" onclick="showLeaderboardSort('pnl')">By P/L</button>
-                <button class="tab" onclick="showLeaderboardSort('points')">By Points</button>
-                <button class="tab" onclick="showLeaderboardSort('cash_in')">By Buy-in</button>
+                <button class="tab active" onclick="showLeaderboardSort('pnl')">By standing</button>
+                <button class="tab" onclick="showLeaderboardSort('points')">By points</button>
+                <button class="tab" onclick="showLeaderboardSort('cash_in')">By buy-in</button>
             </div>
-            <div id="leaderboard-list">
-                <div style="text-align:center; color:#888; padding: 20px;">Loading...</div>
-            </div>
+            <div id="leaderboard-list"><div class="empty">Loading…</div></div>
         </div>
 
-        <!-- Slots Lobby -->
+        <!-- ===== Slots lobby ===== -->
         <div id="slots-lobby-view" class="hidden">
-            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="view-head">
+                <div class="view-title">Slots</div>
+                <div class="view-sub">Provably fair. Wagers reward points, never your cash standing.</div>
+            </div>
+
             <div class="card">
-                <h3 style="margin-bottom:12px;">🎰 Pick a Machine</h3>
                 <div class="input-group">
-                    <label>Card ID</label>
-                    <input type="text" id="slots-card-id" placeholder="Scan or enter card ID"
+                    <label for="slots-card-id">Card ID</label>
+                    <input type="text" id="slots-card-id" placeholder="Scan or type a card ID"
                            onchange="loadSlotPlayer(this.value.trim())">
                 </div>
-                <div id="slots-player-banner" class="hidden"
-                     style="text-align:center; margin-bottom:14px; padding:8px; background:#1a1a2e; border-radius:8px;">
-                    <span style="color:#ffd700; font-weight:bold;" id="slots-player-name"></span>
-                    · <span id="slots-player-points" style="color:#ffd700; font-weight:bold;">0</span> pts
+                <div id="slots-player-banner" class="hidden">
+                    <span class="eyebrow">Playing as</span>
+                    <div style="margin-top:4px;">
+                        <span id="slots-player-name" style="font-weight:600;"></span>
+                        <span class="num" style="color:var(--brass); margin-left:8px;"
+                              id="slots-player-points">0</span>
+                        <span class="eyebrow"> pts</span>
+                    </div>
                 </div>
-                <div id="machine-list">Loading...</div>
-                <p style="color:#666; font-size:0.75rem; text-align:center; margin-top:12px;">
-                    Slots use reward points only. Your cash P/L is never affected.
-                </p>
             </div>
+
+            <div id="machine-list"><div class="empty">Loading…</div></div>
         </div>
 
-        <!-- Slots Play -->
+        <!-- ===== Slots play ===== -->
         <div id="slots-play-view" class="hidden">
-            <button class="back-btn" onclick="slotsBack()">← Machines</button>
-            <div class="card" style="text-align:center;">
+            <button class="back-btn" onclick="slotsBack()">← All machines</button>
+            <div class="card slot-stage">
                 <div class="machine-name" id="machine-title"></div>
                 <div class="machine-tagline" id="machine-tagline"></div>
-                <div class="slot-balance">Points: <span id="slot-balance">0</span></div>
+                <div class="slot-balance">Balance <span id="slot-balance">0</span></div>
 
                 <div id="reel-area" class="reel-area"></div>
                 <div id="spin-result" class="spin-result"></div>
 
                 <div class="bet-row">
-                    <button class="bet-adjust" onclick="adjustBet(-1)">−</button>
+                    <button class="bet-adjust" onclick="adjustBet(-1)" aria-label="Lower bet">−</button>
                     <div class="bet-display">
                         <span id="bet-amount">10</span>
-                        <span class="bet-label">bet per spin</span>
+                        <span class="bet-label">Bet per spin</span>
                     </div>
-                    <button class="bet-adjust" onclick="adjustBet(1)">+</button>
+                    <button class="bet-adjust" onclick="adjustBet(1)" aria-label="Raise bet">+</button>
                 </div>
 
-                <button class="btn btn-gold" id="spin-btn" onclick="doSpin()">SPIN</button>
-                <div style="display:flex; gap:8px;">
-                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="maxBet()">Max Bet</button>
-                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="togglePaytable()">Paytable</button>
-                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="toggleFairness()">🔐 Fairness</button>
+                <button class="btn btn-gold" id="spin-btn" onclick="doSpin()">Spin</button>
+                <div class="slot-actions">
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="maxBet()">Max</button>
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="togglePaytable()">Pays</button>
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="toggleFairness()">Fairness</button>
                 </div>
 
                 <div id="paytable" class="paytable hidden"></div>
 
                 <div id="fairness-panel" class="fairness-panel hidden">
                     <div class="fairness-explainer">
-                        <strong style="color:#ffd700;">How you know this is fair</strong><br>
+                        <strong>How you know this is straight.</strong><br>
                         Every spin comes from
                         <code>HMAC-SHA256(server seed, "client seed:spin number")</code>.
-                        You see the <em>hash</em> of the server seed before you play, so the house
-                        is locked in — it can't swap the seed after seeing your bet. You control the
-                        client seed, so it can't pre-build a losing run for you either.
-                        Rotate the seed any time to reveal the secret and recheck every spin.
+                        You see the hash of the server seed before you play, so the house is
+                        locked in and can't swap it after seeing your bet. You control the
+                        client seed, so it can't build a losing run aimed at you. Rotate any
+                        time to reveal the secret and recheck every spin.
                     </div>
 
                     <div class="fairness-row">
-                        <div class="fairness-label">Server seed hash (committed now)</div>
+                        <div class="fairness-label">Server seed hash — committed now</div>
                         <div class="fairness-value" id="seed-hash">—</div>
                     </div>
                     <div class="fairness-row">
@@ -664,20 +1236,22 @@
                         <div class="fairness-value" id="seed-nonce">0</div>
                     </div>
 
-                    <div class="input-group" style="margin-top:12px;">
-                        <label>New client seed (optional)</label>
-                        <input type="text" id="new-client-seed" placeholder="Pick anything, or leave blank for random" maxlength="64">
+                    <div class="input-group" style="margin-top:14px;">
+                        <label for="new-client-seed">New client seed — optional</label>
+                        <input type="text" id="new-client-seed" maxlength="64"
+                               placeholder="Pick anything, or leave blank for random">
                     </div>
-                    <button class="btn btn-small btn-primary" onclick="rotateSeed()">Rotate &amp; Reveal Server Seed</button>
+                    <button class="btn btn-small btn-secondary" onclick="rotateSeed()">
+                        Rotate &amp; reveal server seed</button>
                     <div id="rotate-result" class="hidden"></div>
 
-                    <div id="revealed-box" class="hidden" style="margin-top:14px;">
+                    <div id="revealed-box" class="hidden" style="margin-top:16px;">
                         <div class="fairness-row">
                             <div class="fairness-label">Revealed server seed</div>
                             <div class="fairness-value" id="revealed-seed">—</div>
                         </div>
                         <div class="fairness-row">
-                            <div class="fairness-label">Its hash — compare to what you were shown</div>
+                            <div class="fairness-label">Its hash — compare to the commitment above</div>
                             <div class="fairness-value" id="revealed-hash">—</div>
                         </div>
                         <div class="fairness-row">
@@ -688,108 +1262,132 @@
                             <div class="fairness-label">Spins made on it</div>
                             <div class="fairness-value" id="revealed-spins">0</div>
                         </div>
-                        <div class="input-group" style="margin-top:10px;">
-                            <label>Recompute spin number</label>
+                        <div class="input-group" style="margin-top:12px;">
+                            <label for="verify-nonce">Recompute spin number</label>
                             <input type="number" id="verify-nonce" placeholder="0" min="0">
                         </div>
-                        <button class="btn btn-small btn-secondary" onclick="verifyRevealedSeed()">Verify That Spin</button>
+                        <button class="btn btn-small btn-secondary" onclick="verifyRevealedSeed()">
+                            Verify that spin</button>
                         <div class="verify-output" id="verify-output"></div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Add Funds -->
+        <!-- ===== Add funds ===== -->
         <div id="deposit-view" class="hidden">
-            <button class="back-btn" onclick="backToMenu()">← Back</button>
+            <div class="view-head">
+                <div class="view-title">Add funds</div>
+                <div class="view-sub">Send it yourself, then the dealer confirms. $1 = 100 points.</div>
+            </div>
 
             <div id="deposit-form">
-                <div class="card">
-                    <h3 style="margin-bottom:12px;">₿ Add Funds</h3>
-                    <div class="input-group">
-                        <label>Card ID</label>
-                        <input type="text" id="deposit-card-id" placeholder="Scan or enter card ID">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">Amount</div>
+                        <div class="input-group">
+                            <label for="deposit-card-id">Card ID</label>
+                            <input type="text" id="deposit-card-id" placeholder="Scan or type a card ID">
+                        </div>
+                        <div class="input-group">
+                            <label for="deposit-amount">US dollars</label>
+                            <input type="number" id="deposit-amount" placeholder="0.00" step="0.01" min="1">
+                        </div>
+                        <div class="amount-presets">
+                            <button class="amount-preset" onclick="setDepositAmount(20)">$20</button>
+                            <button class="amount-preset" onclick="setDepositAmount(50)">$50</button>
+                            <button class="amount-preset" onclick="setDepositAmount(100)">$100</button>
+                            <button class="amount-preset" onclick="setDepositAmount(250)">$250</button>
+                        </div>
                     </div>
-                    <div class="input-group">
-                        <label>Amount (USD)</label>
-                        <input type="number" id="deposit-amount" placeholder="0.00" step="0.01" min="1">
+                    <div class="card">
+                        <div class="card-title">Pay with</div>
+                        <div id="method-list"><div class="empty">Loading…</div></div>
+                        <button class="btn btn-green" style="margin-top:14px;"
+                                onclick="submitDepositRequest()">Get payment details</button>
+                        <div id="deposit-error" class="error hidden"></div>
                     </div>
-                    <div class="amount-presets">
-                        <button class="amount-preset" onclick="setDepositAmount(20)">$20</button>
-                        <button class="amount-preset" onclick="setDepositAmount(50)">$50</button>
-                        <button class="amount-preset" onclick="setDepositAmount(100)">$100</button>
-                        <button class="amount-preset" onclick="setDepositAmount(250)">$250</button>
-                    </div>
-                    <label style="display:block; margin-bottom:8px; color:#aaa; font-size:0.9rem;">Pay with</label>
-                    <div id="method-list">Loading...</div>
-                    <button class="btn btn-green" style="margin-top:12px;" onclick="submitDepositRequest()">
-                        Get Payment Details
-                    </button>
-                    <div id="deposit-error" class="error hidden"></div>
-                    <p style="color:#666; font-size:0.75rem; margin-top:12px; line-height:1.5;">
-                        You send funds directly to the house wallet — nothing is charged automatically.
-                        Points are credited once the dealer confirms the money arrived.
-                        Every $1 = 100 reward points.
-                    </p>
                 </div>
+                <p class="fine" style="margin-top:14px;">
+                    Nothing is charged automatically. You send funds from your own wallet or app,
+                    and points land once the dealer confirms the money arrived.
+                </p>
             </div>
 
             <div id="deposit-instructions" class="hidden"></div>
         </div>
 
-        <!-- Worker Login -->
+        <!-- ===== Bar (worker) login ===== -->
         <div id="worker-login-view" class="hidden">
-            <button class="back-btn" onclick="backToMenu()">← Back</button>
-            <div class="card">
-                <h2 style="margin-bottom:16px;">🍸 Worker Login</h2>
+            <div class="view-head">
+                <div class="view-title">Bar</div>
+                <div class="view-sub">Redeem points for drinks and food.</div>
+            </div>
+            <div class="card" style="max-width:420px;">
                 <div class="input-group">
-                    <label>PIN</label>
-                    <input type="password" id="worker-pin" placeholder="Enter worker PIN" maxlength="10">
+                    <label for="worker-pin">Worker PIN</label>
+                    <input type="password" id="worker-pin" maxlength="10" placeholder="••••">
                 </div>
-                <button class="btn btn-green" onclick="workerLogin()">Login</button>
+                <button class="btn btn-green" onclick="workerLogin()">Sign in</button>
                 <div id="worker-login-error" class="error hidden"></div>
             </div>
         </div>
 
-        <!-- Worker Panel -->
+        <!-- ===== Bar (worker) panel ===== -->
         <div id="worker-view" class="hidden">
-            <button class="back-btn" onclick="workerLogout()">← Logout</button>
-            <div class="card">
-                <h3 style="margin-bottom:12px;">Redeem Points</h3>
-                <div class="input-group">
-                    <label>Card ID</label>
-                    <input type="text" id="worker-card-id" placeholder="Scan or enter card ID">
+            <button class="back-btn" onclick="workerLogout()">← Sign out</button>
+            <div class="view-head">
+                <div class="view-title">Redeem</div>
+                <div class="view-sub">Look up the player, then pick what they're having.</div>
+            </div>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-title">Player</div>
+                    <div class="input-group">
+                        <label for="worker-card-id">Card ID</label>
+                        <input type="text" id="worker-card-id" placeholder="Scan or type a card ID">
+                    </div>
+                    <button class="btn btn-small btn-secondary" onclick="workerLookupPlayer()">Look up</button>
+                    <div id="worker-player-info" class="hidden" style="margin-top:14px;">
+                        <span class="eyebrow">Serving</span>
+                        <div style="margin-top:4px;">
+                            <span id="worker-player-name" style="font-weight:600;"></span>
+                            <span class="num" id="worker-player-points"
+                                  style="color:var(--brass); margin-left:8px;">0</span>
+                            <span class="eyebrow"> pts</span>
+                        </div>
+                    </div>
+                    <div id="worker-result" class="hidden"></div>
                 </div>
-                <div id="worker-player-info" class="hidden" style="text-align:center; margin-bottom:16px;">
-                    <div style="color:#ffd700; font-weight:bold;" id="worker-player-name"></div>
-                    <div style="font-size:0.85rem; color:#888;">Points: <span id="worker-player-points" style="color:#ffd700; font-weight:bold;">0</span></div>
+                <div class="card" id="reward-list">
+                    <div class="card-title">On the menu</div>
+                    <div id="rewards-container"><div class="empty">Loading…</div></div>
                 </div>
-                <button class="btn btn-small btn-secondary" onclick="workerLookupPlayer()" style="margin-bottom:12px;">Look Up Player</button>
-                <div id="reward-list">
-                    <h4 style="margin-bottom:8px; color:#aaa;">Select Reward:</h4>
-                    <div id="rewards-container">Loading...</div>
-                </div>
-                <div id="worker-result" class="hidden"></div>
             </div>
         </div>
 
-        <!-- Admin Login -->
+        <!-- ===== Dealer login ===== -->
         <div id="admin-login-view" class="hidden">
-            <button class="back-btn" onclick="backToMenu()">← Back</button>
-            <div class="card">
-                <h2 style="margin-bottom:16px;">🔐 Dealer Login</h2>
+            <div class="view-head">
+                <div class="view-title">Dealer</div>
+                <div class="view-sub">Buy-ins, cash-outs, deposits and registration.</div>
+            </div>
+            <div class="card" style="max-width:420px;">
                 <div class="input-group">
-                    <label>PIN</label>
-                    <input type="password" id="admin-pin" placeholder="Enter dealer PIN" maxlength="10">
+                    <label for="admin-pin">Dealer PIN</label>
+                    <input type="password" id="admin-pin" maxlength="10" placeholder="••••">
                 </div>
-                <button class="btn btn-primary" onclick="adminLogin()">Login</button>
+                <button class="btn btn-primary" onclick="adminLogin()">Sign in</button>
                 <div id="login-error" class="error hidden"></div>
             </div>
         </div>
 
-        <!-- Admin Panel -->
+        <!-- ===== Dealer panel ===== -->
         <div id="admin-view" class="hidden">
-            <button class="back-btn" onclick="adminLogout()">← Logout</button>
+            <button class="back-btn" onclick="adminLogout()">← Sign out</button>
+            <div class="view-head">
+                <div class="view-title">The pit</div>
+            </div>
 
             <div class="tab-bar">
                 <button class="tab active" onclick="showAdminTab('actions')">Actions</button>
@@ -798,72 +1396,79 @@
                 <button class="tab" onclick="showAdminTab('register')">Register</button>
             </div>
 
-            <div id="admin-pending" class="hidden">
-                <div class="card">
-                    <h3 style="margin-bottom:4px;">Pending Deposits</h3>
-                    <p style="color:#888; font-size:0.8rem; margin-bottom:12px;">
-                        Confirm only after you've verified the funds actually landed.
-                    </p>
-                    <div id="pending-list">Loading...</div>
-                    <div id="pending-result" class="hidden"></div>
-                    <button class="btn btn-small btn-secondary" style="margin-top:10px;"
-                            onclick="loadPendingDeposits()">↻ Refresh</button>
-                </div>
-            </div>
-
             <div id="admin-actions">
-                <div class="card">
-                    <h3 style="margin-bottom:12px;">Card Action</h3>
+                <div class="card" style="max-width:520px;">
+                    <div class="card-title">Record an entry</div>
                     <div class="input-group">
-                        <label>Card ID</label>
-                        <input type="text" id="action-card-id" placeholder="Scan or enter card ID">
+                        <label for="action-card-id">Card ID</label>
+                        <input type="text" id="action-card-id" placeholder="Scan or type a card ID">
                     </div>
                     <div class="input-group">
-                        <label>Action</label>
+                        <label for="action-type">Entry type</label>
                         <select id="action-type">
-                            <option value="deposit">💵 Deposit (cash in + earn points)</option>
-                            <option value="cashout">💸 Cash Out (update PNL)</option>
-                            <option value="add_points">⭐ Add Bonus Points</option>
-                            <option value="redeem_points">🎁 Manual Point Redemption</option>
+                            <option value="deposit">Buy-in — cash in, earns points</option>
+                            <option value="cashout">Cash out — pays the player</option>
+                            <option value="add_points">Bonus points</option>
+                            <option value="redeem_points">Manual point redemption</option>
                         </select>
                     </div>
                     <div class="input-group">
-                        <label>Amount ($)</label>
+                        <label for="action-amount">Amount</label>
                         <input type="number" id="action-amount" placeholder="0.00" step="0.01" min="0">
                     </div>
                     <div class="input-group">
-                        <label>Description (optional)</label>
-                        <input type="text" id="action-description" placeholder="e.g., Friday deposit">
+                        <label for="action-description">Note — optional</label>
+                        <input type="text" id="action-description" placeholder="e.g. Friday buy-in">
                     </div>
-                    <button class="btn btn-primary" onclick="submitAction()">Submit</button>
+                    <button class="btn btn-primary" onclick="submitAction()">Record it</button>
                     <div id="action-result" class="hidden"></div>
+                </div>
+            </div>
+
+            <div id="admin-pending" class="hidden">
+                <div class="card">
+                    <div class="card-title">Deposits awaiting confirmation</div>
+                    <p class="fine" style="margin-bottom:14px;">
+                        Confirm only after you've checked the money actually landed.
+                        Confirming credits the player immediately.
+                    </p>
+                    <div id="pending-list"><div class="empty">Loading…</div></div>
+                    <div id="pending-result" class="hidden"></div>
+                    <button class="btn btn-small btn-secondary" style="margin-top:12px;"
+                            onclick="loadPendingDeposits()">Refresh</button>
                 </div>
             </div>
 
             <div id="admin-players" class="hidden">
                 <div class="card">
-                    <h3 style="margin-bottom:12px;">All Players</h3>
-                    <div id="players-list">Loading...</div>
+                    <div class="card-title">Everyone on file</div>
+                    <div id="players-list"><div class="empty">Loading…</div></div>
                 </div>
             </div>
 
             <div id="admin-register" class="hidden">
-                <div class="card">
-                    <h3 style="margin-bottom:12px;">Register New Player</h3>
+                <div class="card" style="max-width:520px;">
+                    <div class="card-title">Register a card</div>
+                    <p class="fine" style="margin-bottom:14px;">
+                        Put the cursor in the card field and tap the card to the reader —
+                        it types its own ID. Don't invent one.
+                    </p>
                     <div class="input-group">
-                        <label>Card ID</label>
-                        <input type="text" id="reg-card-id" placeholder="Scan or enter card ID">
+                        <label for="reg-card-id">Card ID</label>
+                        <input type="text" id="reg-card-id" placeholder="Tap card to reader">
                     </div>
                     <div class="input-group">
-                        <label>Player Name</label>
-                        <input type="text" id="reg-name" placeholder="Enter name">
+                        <label for="reg-name">Player name</label>
+                        <input type="text" id="reg-name" placeholder="e.g. David">
                     </div>
                     <button class="btn btn-gold" onclick="registerPlayer()">Register</button>
                     <div id="reg-result" class="hidden"></div>
                 </div>
             </div>
         </div>
-    </div>
+
+    </main>
+</div>
 
     <script src="/static/app.js"></script>
     <script src="/static/slots.js"></script>

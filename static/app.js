@@ -14,16 +14,84 @@ function checkNFC() {
     const statusEl = document.getElementById('nfc-status');
     if (!statusEl) return;
     if ('NDEFReader' in window) {
-        statusEl.textContent = '✅ NFC supported - tap card to scan';
+        statusEl.textContent = 'NFC ready — tap a card to scan';
         statusEl.classList.remove('hidden');
     } else {
-        statusEl.textContent = '⚠️ NFC not available - use USB reader or enter card ID manually';
+        statusEl.textContent = 'No NFC on this device — use the USB reader or type a card ID';
         statusEl.classList.remove('hidden');
     }
 }
 checkNFC();
 
+// ===== The tally bar =====
+// One line that reads as both ledger columns: debit left of zero, credit right.
+// `scale` is what a full half-bar means — usually the player's total buy-in, so
+// the bar answers "how much of what I brought am I up or down?"
+function setTally(containerId, value, scale) {
+    const box = document.getElementById(containerId);
+    if (!box) return;
+
+    const fill = box.querySelector('.tally-fill');
+    if (fill) {
+        const span = Math.max(Math.abs(scale) || 0, Math.abs(value), 1);
+        const pct = Math.min(1, Math.abs(value) / span) * 50;
+        fill.classList.remove('up', 'down');
+        fill.classList.add(value >= 0 ? 'up' : 'down');
+        fill.style.width = (value === 0 ? 0 : pct) + '%';
+    }
+
+    const label = box.querySelector('.tally-value');
+    if (label) {
+        label.textContent = (value > 0 ? '+$' : value < 0 ? '−$' : '$') +
+                            Math.abs(value).toFixed(2);
+        label.className = 'tally-value ' + (value > 0 ? 'up' : value < 0 ? 'down' : 'flat');
+    }
+}
+
+// ===== Header standing =====
+function setHeaderPlayer(player) {
+    const empty = document.getElementById('head-empty');
+    const box = document.getElementById('head-player');
+    if (!box || !empty) return;
+
+    if (!player) {
+        box.classList.add('hidden');
+        empty.classList.remove('hidden');
+        return;
+    }
+
+    document.getElementById('head-name').textContent = player.name;
+    document.getElementById('head-points').textContent =
+        Math.floor(player.reward_points).toLocaleString();
+
+    const pnlEl = document.getElementById('head-pnl');
+    const pnl = player.pnl;
+    if (typeof pnl === 'number') {
+        pnlEl.textContent = (pnl > 0 ? '+$' : pnl < 0 ? '−$' : '$') + Math.abs(pnl).toFixed(2);
+        pnlEl.style.color = pnl > 0 ? 'var(--chip)' : pnl < 0 ? 'var(--marker)' : 'var(--bone-dim)';
+    }
+    empty.classList.add('hidden');
+    box.classList.remove('hidden');
+}
+
+// A one-word read on the number, so the stat block says something a person would.
+function verdictFor(pnl) {
+    if (pnl > 0) return { text: 'Up', color: 'var(--chip)' };
+    if (pnl < 0) return { text: 'Down', color: 'var(--marker)' };
+    return { text: 'Even', color: 'var(--bone-dim)' };
+}
+
 // ===== View Navigation =====
+function updateNav(viewId) {
+    // Login views should light up the destination they lead to.
+    const alias = { 'admin-login-view': 'admin-view', 'worker-login-view': 'worker-view',
+                    'slots-play-view': 'slots-lobby-view', 'summary-view': 'scan-view' };
+    const target = alias[viewId] || viewId;
+    document.querySelectorAll('.rail-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.nav === target);
+    });
+}
+
 function showView(viewId) {
     ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view',
      'admin-login-view', 'admin-view', 'slots-lobby-view', 'slots-play-view', 'deposit-view'].forEach(id => {
@@ -31,6 +99,8 @@ function showView(viewId) {
         if (el) el.classList.add('hidden');
     });
     document.getElementById(viewId).classList.remove('hidden');
+    updateNav(viewId);
+    window.scrollTo(0, 0);
 }
 
 function backToMenu() {
@@ -56,7 +126,7 @@ async function startScan() {
     document.getElementById('unregistered-result').classList.add('hidden');
 
     const statusEl = document.getElementById('scan-status');
-    statusEl.textContent = 'Hold card to reader or tap NFC...';
+    statusEl.textContent = 'Waiting for a card…';
     statusEl.className = 'scan-status scanning';
 
     const hiddenInput = document.createElement('input');
@@ -132,7 +202,7 @@ async function processScan(cardId) {
     currentCardId = cardId;
 
     const statusEl = document.getElementById('scan-status');
-    statusEl.textContent = 'Looking up...';
+    statusEl.textContent = 'Looking up…';
 
     try {
         const resp = await fetch(`${API_BASE}/api/scan`, {
@@ -143,7 +213,7 @@ async function processScan(cardId) {
         const data = await resp.json();
 
         if (data.registered) {
-            statusEl.textContent = 'Card found!';
+            statusEl.textContent = 'Found it';
             statusEl.className = 'scan-status found';
 
             currentPlayerId = data.player.id;
@@ -152,15 +222,21 @@ async function processScan(cardId) {
             document.getElementById('result-cashin').textContent = '$' + data.player.total_cash_in.toFixed(2);
             document.getElementById('result-cashout').textContent = '$' + data.player.total_cash_out.toFixed(2);
 
-            const pnlEl = document.getElementById('result-pnl');
-            const pnl = data.player.pnl;
-            pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+            // Scale the bar against what they bought in for, so it reads as
+            // "how much of my buy-in am I up or down".
+            setTally('result-tally', data.player.pnl, data.player.total_cash_in);
+
+            const verdict = verdictFor(data.player.pnl);
+            const verdictEl = document.getElementById('result-net-label');
+            verdictEl.textContent = verdict.text;
+            verdictEl.style.color = verdict.color;
+
+            setHeaderPlayer(data.player);
 
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');
         } else {
-            statusEl.textContent = 'Not registered';
+            statusEl.textContent = 'Not on file';
             statusEl.className = 'scan-status not-found';
             document.getElementById('player-result').classList.add('hidden');
             document.getElementById('unregistered-result').classList.remove('hidden');
@@ -181,12 +257,11 @@ async function showSummary() {
         const data = await resp.json();
 
         document.getElementById('summary-name').textContent = data.player.name;
-        document.getElementById('summary-points').textContent = data.player.reward_points.toFixed(0);
+        document.getElementById('summary-points').textContent =
+            Math.floor(data.player.reward_points).toLocaleString();
 
-        const pnlEl = document.getElementById('summary-pnl');
-        const pnl = data.player.pnl;
-        pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-        pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+        setTally('summary-tally', data.player.pnl, data.player.total_cash_in);
+        setHeaderPlayer(data.player);
 
         // Show roast
         if (data.roast) {
@@ -228,7 +303,7 @@ async function loadHistory() {
 
         const tbody = document.getElementById('history-body');
         if (data.events.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#888;">No events yet</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--bone-mute);">No events yet</td></tr>';
             return;
         }
 
@@ -244,13 +319,13 @@ async function loadHistory() {
             return `
                 <tr>
                     <td class="${typeClass}">${formatEventType(e.event_type)}</td>
-                    <td style="font-size:0.8rem; color:#aaa;">${e.description || ''}</td>
+                    <td style="font-size:0.8rem; color:var(--bone-dim);">${e.description || ''}</td>
                     <td style="text-align:right; font-weight:bold;">${changeText}</td>
                 </tr>
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('history-body').innerHTML = '<tr><td colspan="3" style="text-align:center; color:#f44336;">Failed to load</td></tr>';
+        document.getElementById('history-body').innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--marker);">Failed to load</td></tr>';
     }
 }
 
@@ -261,7 +336,7 @@ async function loadDailyPnl() {
 
         const chartEl = document.getElementById('daily-chart');
         if (data.daily_pnl.length === 0) {
-            chartEl.innerHTML = '<div style="text-align:center; color:#888; width:100%; padding: 20px;">No data yet</div>';
+            chartEl.innerHTML = '<div class="empty">No data yet</div>';
             return;
         }
 
@@ -282,7 +357,7 @@ async function loadDailyPnl() {
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('daily-chart').innerHTML = '<div style="text-align:center; color:#f44336; padding: 20px;">Failed to load</div>';
+        document.getElementById('daily-chart').innerHTML = '<div style="text-align:center; color:var(--marker); padding: 20px;">Failed to load</div>';
     }
 }
 
@@ -318,12 +393,18 @@ async function loadLeaderboard(sortBy) {
 
         const houseEl = document.getElementById('house-pnl');
         const housePnl = data.house_pnl;
-        houseEl.textContent = (housePnl >= 0 ? 'UP' : 'DOWN') + ' $' + Math.abs(housePnl).toFixed(2);
-        houseEl.style.color = housePnl >= 0 ? '#4caf50' : '#f44336';
+        houseEl.textContent = (housePnl > 0 ? 'up $' : housePnl < 0 ? 'down $' : 'even at $') +
+                              Math.abs(housePnl).toFixed(2);
+        houseEl.style.color = housePnl > 0 ? 'var(--chip)'
+                            : housePnl < 0 ? 'var(--marker)' : 'var(--bone-dim)';
+
+        // Scale the house bar against everything wagered through it tonight.
+        const totalIn = data.players.reduce((sum, p) => sum + p.total_cash_in, 0);
+        setTally('house-tally', housePnl, totalIn);
 
         const listEl = document.getElementById('leaderboard-list');
         if (data.players.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; color:#888; padding: 20px;">No players yet</div>';
+            listEl.innerHTML = '<div class="empty">No players yet</div>';
             return;
         }
 
@@ -352,7 +433,7 @@ async function loadLeaderboard(sortBy) {
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('leaderboard-list').innerHTML = '<div style="text-align:center; color:#f44336; padding: 20px;">Failed to load</div>';
+        document.getElementById('leaderboard-list').innerHTML = '<div style="text-align:center; color:var(--marker); padding: 20px;">Failed to load</div>';
     }
 }
 
@@ -433,7 +514,7 @@ async function loadRewards() {
             </div>
         `).join('');
     } catch (err) {
-        document.getElementById('rewards-container').innerHTML = '<p style="color:#f44336;">Failed to load rewards</p>';
+        document.getElementById('rewards-container').innerHTML = '<p style="color:var(--marker);">Failed to load rewards</p>';
     }
 }
 
@@ -580,7 +661,7 @@ async function loadPlayers() {
 
         const listEl = document.getElementById('players-list');
         if (players.length === 0) {
-            listEl.innerHTML = '<p style="text-align:center;color:#888;">No players registered</p>';
+            listEl.innerHTML = '<div class="empty">No players registered</div>';
             return;
         }
 
@@ -588,19 +669,19 @@ async function loadPlayers() {
             <div class="player-list-item">
                 <div>
                     <div class="player-list-name">${p.name}</div>
-                    <div style="font-size:0.75rem;color:#888;">${p.card_id.substring(0, 12)}...</div>
+                    <div style="font-size:0.75rem;color:var(--bone-mute);">${p.card_id.substring(0, 12)}...</div>
                 </div>
                 <div style="text-align:right;">
                     <div class="player-list-points">${p.reward_points.toFixed(0)} pts</div>
-                    <div style="font-size:0.75rem;color:#888;">In: $${p.total_cash_in.toFixed(0)} | Out: $${p.total_cash_out.toFixed(0)}</div>
-                    <div style="font-size:0.75rem;color:${p.pnl >= 0 ? '#4caf50' : '#f44336'};">
+                    <div style="font-size:0.75rem;color:var(--bone-mute);">In: $${p.total_cash_in.toFixed(0)} | Out: $${p.total_cash_out.toFixed(0)}</div>
+                    <div style="font-size:0.75rem;color:${p.pnl >= 0 ? 'var(--chip)' : 'var(--marker)'};">
                         P/L: ${p.pnl >= 0 ? '+' : '-'}$${Math.abs(p.pnl).toFixed(2)}
                     </div>
                 </div>
             </div>
         `).join('');
     } catch (err) {
-        document.getElementById('players-list').innerHTML = '<p style="text-align:center;color:#f44336;">Failed to load</p>';
+        document.getElementById('players-list').innerHTML = '<p style="text-align:center;color:var(--marker);">Failed to load</p>';
     }
 }
 
@@ -664,14 +745,14 @@ async function searchPlayers() {
     if (!query) return;
     
     const resultsEl = document.getElementById('search-results');
-    resultsEl.innerHTML = '<div style="text-align:center; color:#888;">Searching...</div>';
+    resultsEl.innerHTML = '<div class="empty">Searching...</div>';
     
     try {
         const resp = await fetch(`${API_BASE}/api/players/search?query=${encodeURIComponent(query)}`);
         const data = await resp.json();
         
         if (data.count === 0) {
-            resultsEl.innerHTML = '<div style="text-align:center; color:#888;">No players found</div>';
+            resultsEl.innerHTML = '<div class="empty">No players found</div>';
             return;
         }
         
@@ -681,11 +762,11 @@ async function searchPlayers() {
                 <div class="player-list-item" onclick="selectSearchedPlayer(${p.id})" style="cursor:pointer;">
                     <div>
                         <div class="player-list-name">${p.name}</div>
-                        <div style="font-size:0.75rem;color:#888;">${p.card_id.substring(0, 12)}...</div>
+                        <div style="font-size:0.75rem;color:var(--bone-mute);">${p.card_id.substring(0, 12)}...</div>
                     </div>
                     <div style="text-align:right;">
                         <div class="player-list-points">${p.reward_points.toFixed(0)} pts</div>
-                        <div style="font-size:0.75rem;color:${p.pnl >= 0 ? '#4caf50' : '#f44336'};">
+                        <div style="font-size:0.75rem;color:${p.pnl >= 0 ? 'var(--chip)' : 'var(--marker)'};">
                             P/L: ${pnlSign}$${Math.abs(p.pnl).toFixed(2)}
                         </div>
                     </div>
@@ -693,7 +774,7 @@ async function searchPlayers() {
             `;
         }).join('');
     } catch (err) {
-        resultsEl.innerHTML = '<div style="text-align:center; color:#f44336;">Search failed</div>';
+        resultsEl.innerHTML = '<div style="text-align:center; color:var(--marker);">Search failed</div>';
     }
 }
 
@@ -708,12 +789,16 @@ async function selectSearchedPlayer(playerId) {
             document.getElementById('result-points').textContent = player.reward_points.toFixed(0);
             document.getElementById('result-cashin').textContent = '$' + player.total_cash_in.toFixed(2);
             document.getElementById('result-cashout').textContent = '$' + player.total_cash_out.toFixed(2);
-            
-            const pnlEl = document.getElementById('result-pnl');
-            const pnl = player.pnl;
-            pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-            
+
+            setTally('result-tally', player.pnl, player.total_cash_in);
+
+            const verdict = verdictFor(player.pnl);
+            const verdictEl = document.getElementById('result-net-label');
+            verdictEl.textContent = verdict.text;
+            verdictEl.style.color = verdict.color;
+
+            setHeaderPlayer(player);
+
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');
             document.getElementById('search-results').innerHTML = '';

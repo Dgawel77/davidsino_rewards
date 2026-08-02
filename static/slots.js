@@ -42,7 +42,7 @@ async function loadMachines() {
             </div>
         `).join('');
     } catch (err) {
-        el.innerHTML = '<div style="color:#f44336;">Failed to load machines</div>';
+        el.innerHTML = '<div style="color:var(--marker);">Failed to load machines</div>';
     }
 }
 
@@ -61,6 +61,7 @@ async function loadSlotPlayer(cardId) {
             document.getElementById('slots-player-name').textContent = data.player.name;
             document.getElementById('slots-player-points').textContent = Math.floor(slotBalance).toLocaleString();
             banner.classList.remove('hidden');
+            setHeaderPlayer(data.player);
             return true;
         }
         banner.classList.add('hidden');
@@ -74,12 +75,12 @@ async function loadSlotPlayer(cardId) {
 async function openMachine(key) {
     const cardId = document.getElementById('slots-card-id').value.trim();
     if (!cardId) {
-        alert('Enter your card ID first');
+        alert('Enter a card ID first');
         return;
     }
     const found = await loadSlotPlayer(cardId);
     if (!found) {
-        alert('Card not registered — see the dealer');
+        alert('That card is not on file — see the dealer');
         return;
     }
 
@@ -130,6 +131,9 @@ function drawGrid(grid, winCells) {
 function updateBalance(points) {
     slotBalance = points;
     document.getElementById('slot-balance').textContent = Math.floor(points).toLocaleString();
+    // Keep the header in step so the standing is never stale after a spin.
+    const headerPoints = document.getElementById('head-points');
+    if (headerPoints) headerPoints.textContent = Math.floor(points).toLocaleString();
 }
 
 function updateBetDisplay() {
@@ -170,7 +174,7 @@ async function doSpin() {
     spinning = true;
     const btn = document.getElementById('spin-btn');
     btn.disabled = true;
-    btn.textContent = 'SPINNING...';
+    btn.textContent = 'Spinning…';
     resultEl.textContent = '';
     resultEl.className = 'spin-result';
 
@@ -208,7 +212,7 @@ async function doSpin() {
     } finally {
         spinning = false;
         btn.disabled = false;
-        btn.textContent = 'SPIN';
+        btn.textContent = 'Spin';
     }
 }
 
@@ -283,7 +287,7 @@ function sleep(ms) {
 function renderPaytable() {
     const el = document.getElementById('paytable');
     const rows = currentMachine.paytable.map(([combo, pay]) => `
-        <div class="paytable-row"><span>${combo}</span><span style="color:#ffd700;">${pay}</span></div>
+        <div class="paytable-row"><span>${combo}</span><span style="color:var(--brass);">${pay}</span></div>
     `).join('');
     el.innerHTML = rows +
         (currentMachine.paytable_note ? `<div class="paytable-note">${currentMachine.paytable_note}</div>` : '');

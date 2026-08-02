@@ -21,7 +21,7 @@ async function showDeposit() {
 
 async function loadDepositMethods() {
     const container = document.getElementById('method-list');
-    container.innerHTML = '<div style="color:#888;">Loading...</div>';
+    container.innerHTML = '<div style="color:var(--bone-mute);">Loading...</div>';
 
     try {
         const resp = await fetch(`${API_BASE}/api/payments/methods`);
@@ -31,7 +31,7 @@ async function loadDepositMethods() {
 
         if (depositMethods.length === 0) {
             container.innerHTML = `
-                <div style="text-align:center; color:#888; padding:16px;">
+                <div style="text-align:center; color:var(--bone-mute); padding:16px;">
                     No deposit methods set up yet.<br>
                     <span style="font-size:0.8rem;">The dealer needs to add a wallet
                     address or payment handle to the server config.</span>
@@ -53,7 +53,7 @@ async function loadDepositMethods() {
                 </div>`;
         }).join('');
     } catch (err) {
-        container.innerHTML = '<div style="color:#f44336;">Failed to load payment methods</div>';
+        container.innerHTML = '<div style="color:var(--marker);">Failed to load payment methods</div>';
     }
 }
 
@@ -160,9 +160,9 @@ function renderInstructions(data) {
                 </div>
                 <button class="btn btn-small btn-secondary" onclick="submitTxid()">Submit TXID</button>
             ` : ''}
-            <p style="color:#888; font-size:0.85rem; margin-top:10px;">
+            <p style="color:var(--bone-mute); font-size:0.85rem; margin-top:10px;">
                 Show this screen to the dealer. Your
-                <strong style="color:#ffd700;">${(data.points_on_confirm).toLocaleString()} points</strong>
+                <strong style="color:var(--brass);">${(data.points_on_confirm).toLocaleString()} points</strong>
                 land as soon as they confirm the money arrived.
             </p>
             <div id="txid-result" class="hidden"></div>
@@ -202,21 +202,21 @@ async function submitTxid() {
 // ===== Dealer: confirm queue =====
 async function loadPendingDeposits() {
     const listEl = document.getElementById('pending-list');
-    listEl.innerHTML = '<div style="color:#888;">Loading...</div>';
+    listEl.innerHTML = '<div style="color:var(--bone-mute);">Loading...</div>';
 
     try {
         const resp = await fetch(`${API_BASE}/api/admin/pending-deposits`, {
             headers: { 'X-Admin-Pin': adminPin || '' }
         });
         if (resp.status === 401) {
-            listEl.innerHTML = '<div style="color:#f44336;">Session expired — log in again</div>';
+            listEl.innerHTML = '<div style="color:var(--marker);">Session expired — log in again</div>';
             return;
         }
         const data = await resp.json();
         const requests = data.requests || [];
 
         if (requests.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; color:#888; padding:16px;">No pending deposits</div>';
+            listEl.innerHTML = '<div class="empty">No pending deposits</div>';
             return;
         }
 
@@ -247,7 +247,7 @@ async function loadPendingDeposits() {
                 </div>`;
         }).join('');
     } catch (err) {
-        listEl.innerHTML = '<div style="color:#f44336;">Failed to load</div>';
+        listEl.innerHTML = '<div style="color:var(--marker);">Failed to load</div>';
     }
 }
 
