@@ -7,15 +7,18 @@ import json
 from datetime import datetime, timezone, timedelta, date
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Numeric, func, desc, asc
+from fastapi.responses import FileResponse, Response
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Numeric, Boolean, func, desc, asc
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.dialects.postgresql import JSONB
 from pydantic import BaseModel
 from typing import Optional, List
+
+import slots as slots_engine
+import payments as payments_lib
 
 load_dotenv()
 
@@ -81,6 +84,43 @@ class DailyRoast(Base):
     roast_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+class SlotSeed(Base):
+    """
+    Provably-fair seed pair for one player.
+
+    `server_seed` stays secret while `active` is true; only its SHA-256 hash is
+    published. Rotating reveals the old seed so every spin made under it can be
+    independently recomputed.
+    """
+    __tablename__ = "slot_seeds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_seed = Column(String(128), nullable=False)
+    server_seed_hash = Column(String(64), nullable=False, index=True)
+    client_seed = Column(String(64), nullable=False)
+    nonce = Column(Integer, default=0, nullable=False)
+    active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    revealed_at = Column(DateTime, nullable=True)
+
+class PendingDeposit(Base):
+    """
+    A player's declared intent to deposit. Credits nothing until a dealer
+    confirms the money actually arrived.
+    """
+    __tablename__ = "pending_deposits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    method = Column(String(30), nullable=False)
+    status = Column(String(20), default="pending", nullable=False, index=True)  # pending|confirmed|cancelled
+    txid = Column(String(200), nullable=True)
+    instructions_json = Column(JSONB, default=dict)  # snapshot: address/amount/rate shown to the player
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    resolved_at = Column(DateTime, nullable=True)
+
 # Create all tables
 Base.metadata.create_all(bind=engine)
 
@@ -144,6 +184,30 @@ class WorkerRedeemRequest(BaseModel):
 class RoastRequest(BaseModel):
     player_id: int
 
+class SlotSpinRequest(BaseModel):
+    card_id: str
+    machine: str
+    bet: float
+
+class SlotSeedRotateRequest(BaseModel):
+    card_id: str
+    client_seed: Optional[str] = None
+
+class SlotVerifyRequest(BaseModel):
+    machine: str
+    bet: float
+    server_seed: str
+    client_seed: str
+    nonce: int
+
+class DepositRequestCreate(BaseModel):
+    card_id: str
+    amount: float
+    method: str
+
+class TxidRequest(BaseModel):
+    txid: str
+
 # ============================================================
 # FastAPI App
 # ============================================================
@@ -165,6 +229,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def require_admin(x_admin_pin: str = Header(None)):
+    """
+    Gate for endpoints that move money.
+
+    NOTE: the pre-existing /api/admin/* routes are unauthenticated — the PIN is
+    only checked in the browser. That is a known gap tracked separately; new
+    money-moving endpoints require the PIN as a header so it can't be bypassed
+    by calling the API directly.
+    """
+    if x_admin_pin != ADMIN_PIN:
+        raise HTTPException(status_code=401, detail="Admin PIN required")
+    return True
 
 def get_pnl(player: Player) -> float:
     """PNL = cash_out - cash_in (positive = player ahead, negative = player down)"""
@@ -646,6 +723,377 @@ def redeem_points(request: AdjustmentRequest, db: Session = Depends(get_db)):
     db.refresh(player)
 
     return {"message": "Points redeemed", "reward_points": player.reward_points, "player": player.name}
+
+# ============================================================
+# Routes - Payments (crypto-first deposit requests)
+#
+# Money moves person-to-person; this app only records the request and credits
+# the player once a dealer confirms the funds actually landed.
+# ============================================================
+MAX_DEPOSIT_USD = float(os.getenv("MAX_DEPOSIT_USD", "10000"))
+
+@app.get("/api/payments/methods")
+def payment_methods():
+    """Configured deposit methods. Empty list = operator hasn't set any addresses."""
+    return {"methods": payments_lib.available_methods(),
+            "max_deposit": MAX_DEPOSIT_USD}
+
+@app.post("/api/payments/deposit-request")
+def create_deposit_request(request: DepositRequestCreate, db: Session = Depends(get_db)):
+    """Create a pending deposit and return everything needed to send the money."""
+    method = payments_lib.get_method(request.method)
+    if not method:
+        raise HTTPException(status_code=400, detail="Payment method not available")
+    if not (0 < request.amount <= MAX_DEPOSIT_USD):
+        raise HTTPException(status_code=400,
+                            detail=f"Amount must be between $0 and ${MAX_DEPOSIT_USD:,.0f}")
+
+    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    amount = round(request.amount, 2)
+    instructions = payments_lib.build_instructions(method, amount)
+
+    req = PendingDeposit(
+        player_id=player.id,
+        amount=amount,
+        method=request.method,
+        instructions_json=instructions,
+    )
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+
+    return {
+        "request_id": req.id,
+        "status": req.status,
+        "player": player.name,
+        "amount": amount,
+        "points_on_confirm": amount * 100,
+        "instructions": instructions,
+        "qr_url": f"/api/payments/request/{req.id}/qr",
+    }
+
+@app.get("/api/payments/request/{req_id}")
+def get_deposit_request(req_id: int, db: Session = Depends(get_db)):
+    """Poll a request. Instructions come from the stored snapshot so the address
+    and quoted rate never drift after the player has been shown them."""
+    req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return {
+        "request_id": req.id,
+        "status": req.status,
+        "amount": float(req.amount),
+        "method": req.method,
+        "txid": req.txid,
+        "instructions": req.instructions_json or {},
+        "created_at": req.created_at.isoformat() if req.created_at else None,
+        "resolved_at": req.resolved_at.isoformat() if req.resolved_at else None,
+    }
+
+@app.post("/api/payments/request/{req_id}/txid")
+def attach_txid(req_id: int, body: TxidRequest, db: Session = Depends(get_db)):
+    """Player records the transaction hash so the dealer can verify on-chain."""
+    req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {req.status}")
+
+    txid = body.txid.strip()
+    if not (6 <= len(txid) <= 200):
+        raise HTTPException(status_code=400, detail="That doesn't look like a transaction ID")
+
+    req.txid = txid
+    db.commit()
+    return {"message": "Transaction ID recorded — show the dealer to get credited",
+            "request_id": req.id, "txid": txid}
+
+@app.get("/api/payments/request/{req_id}/qr")
+def deposit_request_qr(req_id: int, db: Session = Depends(get_db)):
+    """QR of the payment URI for this request (address + exact amount when known)."""
+    req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    data = (req.instructions_json or {}).get("uri")
+    png = payments_lib.qr_png(data)
+    if not png:
+        raise HTTPException(status_code=503, detail="QR rendering unavailable")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+@app.get("/api/admin/pending-deposits")
+def list_pending_deposits(db: Session = Depends(get_db), _: bool = Depends(require_admin),
+                          status: str = Query("pending", pattern="^(pending|confirmed|cancelled|all)$")):
+    """Deposit requests awaiting a dealer's confirmation."""
+    q = (db.query(PendingDeposit, Player)
+           .join(Player, Player.id == PendingDeposit.player_id))
+    if status != "all":
+        q = q.filter(PendingDeposit.status == status)
+    rows = q.order_by(PendingDeposit.created_at.desc()).limit(200).all()
+
+    return {"requests": [{
+        "id": r.PendingDeposit.id,
+        "player": r.Player.name,
+        "card_id": r.Player.card_id,
+        "amount": float(r.PendingDeposit.amount),
+        "method": r.PendingDeposit.method,
+        "status": r.PendingDeposit.status,
+        "txid": r.PendingDeposit.txid,
+        "instructions": r.PendingDeposit.instructions_json or {},
+        "created_at": r.PendingDeposit.created_at.isoformat() if r.PendingDeposit.created_at else None,
+    } for r in rows]}
+
+def _claim_pending(db: Session, req_id: int, new_status: str) -> PendingDeposit:
+    """Lock the row and flip it out of `pending`, so a double-click can't credit twice."""
+    req = (db.query(PendingDeposit)
+             .filter(PendingDeposit.id == req_id)
+             .with_for_update()
+             .first())
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {req.status}")
+    req.status = new_status
+    req.resolved_at = datetime.now(timezone.utc)
+    return req
+
+@app.post("/api/admin/pending-deposits/{req_id}/confirm")
+def confirm_pending_deposit(req_id: int, db: Session = Depends(get_db),
+                            _: bool = Depends(require_admin)):
+    """Dealer confirms the funds arrived — credits cash-in and reward points."""
+    req = _claim_pending(db, req_id, "confirmed")
+    player = db.query(Player).filter(Player.id == req.player_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    amount = float(req.amount)
+    reward_earned = amount * 100
+    player.total_cash_in += amount
+    player.reward_points += reward_earned
+
+    instructions = req.instructions_json or {}
+    label = instructions.get("label", req.method)
+    record_event(
+        db, player.id, "deposit",
+        cash_amount=amount,
+        points_delta=reward_earned,
+        pnl_impact=amount,
+        metadata={
+            "method": req.method,
+            "pending_deposit_id": req.id,
+            "txid": req.txid,
+            "crypto_amount": instructions.get("crypto_amount"),
+            "symbol": instructions.get("symbol"),
+            "price_usd": instructions.get("price_usd"),
+        },
+        description=f"Deposit ${amount:.2f} via {label} (+{reward_earned:.0f} pts)",
+    )
+    db.commit()
+    db.refresh(player)
+
+    return {"message": f"Confirmed ${amount:.2f} via {label}",
+            "player": player.name,
+            "reward_points": player.reward_points,
+            "reward_earned": reward_earned}
+
+@app.post("/api/admin/pending-deposits/{req_id}/cancel")
+def cancel_pending_deposit(req_id: int, db: Session = Depends(get_db),
+                           _: bool = Depends(require_admin)):
+    """Dealer rejects a request — nothing is credited."""
+    req = _claim_pending(db, req_id, "cancelled")
+    db.commit()
+    return {"message": "Request cancelled", "request_id": req.id}
+
+# ============================================================
+# Routes - Slots (provably fair; bets and wins are reward points, never cash)
+# ============================================================
+def _active_seed(db: Session, player_id: int, lock: bool = False) -> SlotSeed:
+    """Fetch the player's active seed pair, creating one on first play."""
+    q = db.query(SlotSeed).filter(SlotSeed.player_id == player_id, SlotSeed.active.is_(True))
+    if lock:
+        q = q.with_for_update()
+    seed = q.first()
+    if seed:
+        return seed
+
+    server_seed = slots_engine.new_server_seed()
+    seed = SlotSeed(
+        player_id=player_id,
+        server_seed=server_seed,
+        server_seed_hash=slots_engine.seed_hash(server_seed),
+        client_seed=slots_engine.new_client_seed(),
+        nonce=0,
+        active=True,
+    )
+    db.add(seed)
+    db.commit()
+    db.refresh(seed)
+    return seed
+
+def _seed_public(seed: SlotSeed) -> dict:
+    """Everything about a seed pair that is safe to show before the reveal."""
+    return {
+        "server_seed_hash": seed.server_seed_hash,
+        "client_seed": seed.client_seed,
+        "nonce": seed.nonce,
+        "created_at": seed.created_at.isoformat() if seed.created_at else None,
+    }
+
+@app.get("/api/slots/machines")
+def get_slot_machines():
+    return {"machines": slots_engine.machine_list()}
+
+@app.get("/api/slots/seed")
+def get_slot_seed(card_id: str = Query(...), db: Session = Depends(get_db)):
+    """
+    The fairness commitment. `server_seed_hash` is published before any spin;
+    the matching secret is only revealed when the seed is rotated.
+    """
+    player = db.query(Player).filter(Player.card_id == card_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    seed = _active_seed(db, player.id)
+    return {"player": player.name, "seed": _seed_public(seed)}
+
+@app.post("/api/slots/seed/rotate")
+def rotate_slot_seed(request: SlotSeedRotateRequest, db: Session = Depends(get_db)):
+    """
+    Reveal the current server seed and start a fresh one.
+
+    Rotating is how a player audits the house: once the old seed is public,
+    every spin made under it can be recomputed with /api/slots/verify.
+    """
+    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    client_seed = (request.client_seed or "").strip()
+    if client_seed and not (1 <= len(client_seed) <= 64):
+        raise HTTPException(status_code=400, detail="Client seed must be 1-64 characters")
+
+    old = _active_seed(db, player.id, lock=True)
+    old.active = False
+    old.revealed_at = datetime.now(timezone.utc)
+
+    server_seed = slots_engine.new_server_seed()
+    new = SlotSeed(
+        player_id=player.id,
+        server_seed=server_seed,
+        server_seed_hash=slots_engine.seed_hash(server_seed),
+        client_seed=client_seed or slots_engine.new_client_seed(),
+        nonce=0,
+        active=True,
+    )
+    db.add(new)
+    db.commit()
+    db.refresh(new)
+
+    return {
+        "revealed": {
+            "server_seed": old.server_seed,
+            "server_seed_hash": old.server_seed_hash,
+            "client_seed": old.client_seed,
+            "spins_made": old.nonce,
+        },
+        "new_seed": _seed_public(new),
+        "how_to_verify": ("SHA-256 of the revealed server_seed must equal the "
+                          "server_seed_hash you were shown before playing. Then POST "
+                          "/api/slots/verify with any nonce from 0 to spins_made-1 to "
+                          "recompute that spin."),
+    }
+
+@app.post("/api/slots/spin")
+def slot_spin(request: SlotSpinRequest, db: Session = Depends(get_db)):
+    """One provably fair spin, wagering reward points."""
+    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if request.machine not in slots_engine.MACHINES:
+        raise HTTPException(status_code=400, detail="Unknown machine")
+
+    bet = round(float(request.bet), 2)
+    if bet <= 0:
+        raise HTTPException(status_code=400, detail="Bet must be positive")
+    if player.reward_points < bet:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient points. Need {bet:.0f}, have {player.reward_points:.0f}")
+
+    # Lock the seed row so two concurrent spins can never reuse a nonce.
+    seed = _active_seed(db, player.id, lock=True)
+    nonce = seed.nonce
+
+    try:
+        result = slots_engine.spin(request.machine, bet, seed.server_seed,
+                                   seed.client_seed, nonce)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    seed.nonce = nonce + 1
+
+    net = result["win"] - bet
+    player.reward_points += net
+
+    machine_name = slots_engine.MACHINES[request.machine]["name"]
+    outcome = result["detail"] or "No win"
+    record_event(
+        db, player.id, "slot_spin",
+        points_delta=net,
+        metadata={
+            "machine": request.machine,
+            "bet": bet,
+            "win": result["win"],
+            "grid": result["grid"],
+            "nonce": nonce,
+            "client_seed": seed.client_seed,
+            "server_seed_hash": seed.server_seed_hash,
+        },
+        description=f"{machine_name}: bet {bet:.0f}, {outcome} ({net:+.0f} pts)",
+    )
+    db.commit()
+    db.refresh(player)
+
+    result["net"] = net
+    result["reward_points"] = player.reward_points
+    result["next_nonce"] = seed.nonce
+    return result
+
+@app.post("/api/slots/verify")
+def verify_slot_spin(request: SlotVerifyRequest):
+    """
+    Recompute any past spin from its revealed seed. Stateless and public — run it
+    here, or run slots.verify_spin() yourself from the source.
+    """
+    try:
+        return slots_engine.verify_spin(request.machine, request.bet,
+                                        request.server_seed, request.client_seed,
+                                        request.nonce)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/players/{player_id}/slot-history")
+def get_slot_history(player_id: int, db: Session = Depends(get_db),
+                     limit: int = Query(50, ge=1, le=200)):
+    """Past spins with the seed context needed to audit each one."""
+    events = (db.query(PlayerEvent)
+                .filter(PlayerEvent.player_id == player_id,
+                        PlayerEvent.event_type == "slot_spin")
+                .order_by(PlayerEvent.created_at.desc())
+                .limit(limit).all())
+
+    return {"spins": [{
+        "id": e.id,
+        "points_delta": float(e.points_delta),
+        "description": e.description,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+        **(e.metadata_json or {}),
+    } for e in events]}
 
 # ============================================================
 # Routes - Worker

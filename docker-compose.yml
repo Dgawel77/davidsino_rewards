@@ -23,6 +23,21 @@ services:
       DATABASE_URL: postgresql://davidsino:davidsino_pass@db:5432/davidsino
       ADMIN_PIN: ${ADMIN_PIN:-1234}
       WORKER_PIN: ${WORKER_PIN:-5678}
+      # Deposit destinations — see .env.example. Blank = method hidden.
+      BTC_ADDRESS: ${BTC_ADDRESS:-}
+      ETH_ADDRESS: ${ETH_ADDRESS:-}
+      LTC_ADDRESS: ${LTC_ADDRESS:-}
+      SOL_ADDRESS: ${SOL_ADDRESS:-}
+      USDT_ADDRESS: ${USDT_ADDRESS:-}
+      USDC_ADDRESS: ${USDC_ADDRESS:-}
+      USDT_NETWORK: ${USDT_NETWORK:-TRC-20}
+      USDC_NETWORK: ${USDC_NETWORK:-ERC-20}
+      VENMO_HANDLE: ${VENMO_HANDLE:-}
+      CASHAPP_HANDLE: ${CASHAPP_HANDLE:-}
+      PAYPAL_ME: ${PAYPAL_ME:-}
+      ZELLE_HANDLE: ${ZELLE_HANDLE:-}
+      MAX_DEPOSIT_USD: ${MAX_DEPOSIT_USD:-10000}
+      PRICE_FEED_DISABLED: ${PRICE_FEED_DISABLED:-}
     depends_on:
       db:
         condition: service_healthy
