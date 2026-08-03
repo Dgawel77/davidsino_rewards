@@ -6,27 +6,300 @@ let currentScanAbort = null;
 let currentCardId = null;
 let currentPlayerId = null;
 let currentLeaderboardSort = 'pnl';
+// Kept in memory only, so dealer-only endpoints can be called with the PIN header.
+let adminPin = null;
+
+// ===== The session =====
+// One card ID for the whole app. Scan once at the door and every view — slots,
+// funds, your standing — knows who you are. Persisted so a refresh or a phone
+// locking its screen doesn't put you back at the door.
+const SESSION_KEY = 'davidsino.card';
+const TOKEN_KEY = 'davidsino.token';
+let currentPlayer = null;
+let activeView = 'menu-view';
+let authToken = null;
+
+// One place that knows how to talk to the server as *you*. Every call that
+// moves points or reads your ledger goes through here, so the token is attached
+// once rather than remembered at 30 call sites.
+function authHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+    return h;
+}
+
+async function api(path, options) {
+    const opts = Object.assign({}, options || {});
+    opts.headers = authHeaders(opts.headers);
+    const resp = await fetch(`${API_BASE}${path}`, opts);
+    if (resp.status === 401) {
+        // The card is no longer logged in — stop pretending it is.
+        clearSession();
+        showView('scan-view');
+    }
+    return resp;
+}
+
+function setSession(player, cardId, token) {
+    currentPlayer = player;
+    if (token) {
+        authToken = token;
+        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* private mode */ }
+    }
+    currentCardId = cardId || (player && player.card_id) || currentCardId;
+    currentPlayerId = player ? player.id : null;
+    try { localStorage.setItem(SESSION_KEY, currentCardId); } catch (e) { /* private mode */ }
+    setHeaderPlayer(player);
+    syncCardInputs();
+}
+
+function clearSession() {
+    // Drop it server-side too, so a copied token dies with the sign-out.
+    if (authToken) {
+        fetch(`${API_BASE}/api/auth/logout`, {
+            method: 'POST', headers: authHeaders(),
+        }).catch(() => {});
+    }
+    currentPlayer = null;
+    currentCardId = null;
+    currentPlayerId = null;
+    authToken = null;
+    try {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+    } catch (e) { /* private mode */ }
+    setHeaderPlayer(null);
+    syncCardInputs();
+    closeIdentityMenu();
+}
+
+// Re-scan the card we already hold, to pull fresh points/standing.
+async function refreshSession() {
+    if (!currentCardId) return null;
+    try {
+        const resp = await fetch(`${API_BASE}/api/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: currentCardId })
+        });
+        const data = await resp.json();
+        if (data.registered) {
+            setSession(data.player, currentCardId, data.token);
+            return data.player;
+        }
+        // Card was deleted out from under us.
+        clearSession();
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function restoreSession() {
+    let saved = null;
+    try {
+        saved = localStorage.getItem(SESSION_KEY);
+        authToken = localStorage.getItem(TOKEN_KEY);
+    } catch (e) { /* private mode */ }
+    if (!saved || !authToken) {
+        // A card without a live token is not logged in.
+        authToken = null;
+        setHeaderPlayer(null);
+        return;
+    }
+    currentCardId = saved;
+    await refreshSession();
+}
+
+// Any view that still offers a card-ID box gets it filled in and tucked away
+// once we know who's playing.
+function syncCardInputs() {
+    ['slots-card-id', 'deposit-card-id', 'tables-card-id'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input && currentCardId) input.value = currentCardId;
+    });
+    document.querySelectorAll('.needs-card').forEach(el => {
+        el.classList.toggle('hidden', !!currentCardId);
+    });
+}
+
+// ===== Header identity control =====
+function toggleIdentityMenu() {
+    const menu = document.getElementById('identity-menu');
+    const btn = document.getElementById('identity-btn');
+    if (!menu) return;
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !opening);
+    if (btn) btn.setAttribute('aria-expanded', String(opening));
+
+    const input = document.getElementById('identity-input');
+    const err = document.getElementById('identity-error');
+    if (err) err.classList.add('hidden');
+    if (opening && input) {
+        input.value = currentCardId || '';
+        input.focus();
+        input.select();
+    }
+}
+
+function closeIdentityMenu() {
+    const menu = document.getElementById('identity-menu');
+    const btn = document.getElementById('identity-btn');
+    if (menu) menu.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// Typed a card ID straight into the header — look it up and take the session.
+async function submitIdentity() {
+    const input = document.getElementById('identity-input');
+    const err = document.getElementById('identity-error');
+    if (!input) return;
+    const cardId = input.value.trim();
+    if (!cardId) return;
+
+    const fail = (msg) => {
+        if (!err) return;
+        err.textContent = msg;
+        err.classList.remove('hidden');
+    };
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: cardId })
+        });
+        const data = await resp.json();
+        if (!data.registered) return fail('Not on file — see the dealer');
+
+        setSession(data.player, cardId, data.token);
+        closeIdentityMenu();
+        // Refresh whatever view is open so it picks up the new player.
+        rehydrateActiveView();
+    } catch (e) {
+        fail('Connection error');
+    }
+}
+
+// After the session changes, re-run the loader for the view that's on screen.
+function rehydrateActiveView() {
+    if (activeView === 'slots-lobby-view' && typeof showSlotsLobby === 'function') showSlotsLobby();
+    else if (activeView === 'tables-lobby-view' && typeof showTablesLobby === 'function') showTablesLobby();
+    else if (activeView === 'deposit-view' && typeof showDeposit === 'function') showDeposit();
+    else if (activeView === 'scan-view' && currentCardId) processScan(currentCardId);
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.identity')) closeIdentityMenu();
+});
 
 // Check NFC support
 function checkNFC() {
     const statusEl = document.getElementById('nfc-status');
     if (!statusEl) return;
     if ('NDEFReader' in window) {
-        statusEl.textContent = '✅ NFC supported - tap card to scan';
+        statusEl.textContent = 'NFC ready — tap a card to scan';
         statusEl.classList.remove('hidden');
     } else {
-        statusEl.textContent = '⚠️ NFC not available - use USB reader or enter card ID manually';
+        statusEl.textContent = 'No NFC on this device — use the USB reader or type a card ID';
         statusEl.classList.remove('hidden');
     }
 }
 checkNFC();
 
+// ===== The tally bar =====
+// One line that reads as both ledger columns: debit left of zero, credit right.
+// `scale` is what a full half-bar means — usually the player's total buy-in, so
+// the bar answers "how much of what I brought am I up or down?"
+function setTally(containerId, value, scale) {
+    const box = document.getElementById(containerId);
+    if (!box) return;
+
+    const fill = box.querySelector('.tally-fill');
+    if (fill) {
+        const span = Math.max(Math.abs(scale) || 0, Math.abs(value), 1);
+        const pct = Math.min(1, Math.abs(value) / span) * 50;
+        fill.classList.remove('up', 'down');
+        fill.classList.add(value >= 0 ? 'up' : 'down');
+        fill.style.width = (value === 0 ? 0 : pct) + '%';
+    }
+
+    const label = box.querySelector('.tally-value');
+    if (label) {
+        label.textContent = (value > 0 ? '+$' : value < 0 ? '−$' : '$') +
+                            Math.abs(value).toFixed(2);
+        label.className = 'tally-value ' + (value > 0 ? 'up' : value < 0 ? 'down' : 'flat');
+    }
+}
+
+// ===== Header standing =====
+function setHeaderPlayer(player) {
+    const empty = document.getElementById('head-empty');
+    const box = document.getElementById('head-player');
+    const stats = document.getElementById('head-stats');
+    const idle = document.getElementById('head-idle');
+    if (!box || !empty) return;
+
+    // Options that only make sense once a card is in hand.
+    ['identity-standing', 'identity-signout'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !player);
+    });
+
+    if (!player) {
+        box.classList.add('hidden');
+        empty.classList.remove('hidden');
+        if (stats) stats.classList.add('hidden');
+        if (idle) idle.classList.remove('hidden');
+        return;
+    }
+
+    if (stats) stats.classList.remove('hidden');
+    if (idle) idle.classList.add('hidden');
+    document.getElementById('head-name').textContent = player.name;
+    document.getElementById('head-points').textContent =
+        Math.floor(player.reward_points).toLocaleString();
+
+    const pnlEl = document.getElementById('head-pnl');
+    const pnl = player.pnl;
+    if (typeof pnl === 'number') {
+        pnlEl.textContent = (pnl > 0 ? '+$' : pnl < 0 ? '−$' : '$') + Math.abs(pnl).toFixed(2);
+        pnlEl.style.color = pnl > 0 ? 'var(--chip)' : pnl < 0 ? 'var(--marker)' : 'var(--bone-dim)';
+    }
+    empty.classList.add('hidden');
+    box.classList.remove('hidden');
+}
+
+// A one-word read on the number, so the stat block says something a person would.
+function verdictFor(pnl) {
+    if (pnl > 0) return { text: 'Up', color: 'var(--chip)' };
+    if (pnl < 0) return { text: 'Down', color: 'var(--marker)' };
+    return { text: 'Even', color: 'var(--bone-dim)' };
+}
+
 // ===== View Navigation =====
+function updateNav(viewId) {
+    // Login views should light up the destination they lead to.
+    const alias = { 'admin-login-view': 'admin-view', 'worker-login-view': 'worker-view',
+                    'slots-play-view': 'slots-lobby-view', 'summary-view': 'scan-view',
+                    'tables-play-view': 'tables-lobby-view' };
+    const target = alias[viewId] || viewId;
+    document.querySelectorAll('.rail-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.nav === target);
+    });
+}
+
 function showView(viewId) {
-    ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view', 'admin-login-view', 'admin-view'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
+    ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view',
+     'admin-login-view', 'admin-view', 'slots-lobby-view', 'slots-play-view', 'deposit-view',
+     'tables-lobby-view', 'tables-play-view'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
     });
     document.getElementById(viewId).classList.remove('hidden');
+    activeView = viewId;
+    updateNav(viewId);
+    window.scrollTo(0, 0);
 }
 
 function backToMenu() {
@@ -34,9 +307,10 @@ function backToMenu() {
         currentScanAbort.abort();
         currentScanAbort = null;
     }
+    // Drop staff privileges only. The player's card stays scanned in — going
+    // back to the menu is navigation, not signing out.
     currentRole = null;
-    currentCardId = null;
-    currentPlayerId = null;
+    adminPin = null;
     showView('menu-view');
 }
 
@@ -51,7 +325,7 @@ async function startScan() {
     document.getElementById('unregistered-result').classList.add('hidden');
 
     const statusEl = document.getElementById('scan-status');
-    statusEl.textContent = 'Hold card to reader or tap NFC...';
+    statusEl.textContent = 'Waiting for a card…';
     statusEl.className = 'scan-status scanning';
 
     const hiddenInput = document.createElement('input');
@@ -127,7 +401,7 @@ async function processScan(cardId) {
     currentCardId = cardId;
 
     const statusEl = document.getElementById('scan-status');
-    statusEl.textContent = 'Looking up...';
+    statusEl.textContent = 'Looking up…';
 
     try {
         const resp = await fetch(`${API_BASE}/api/scan`, {
@@ -138,24 +412,28 @@ async function processScan(cardId) {
         const data = await resp.json();
 
         if (data.registered) {
-            statusEl.textContent = 'Card found!';
+            statusEl.textContent = 'Found it';
             statusEl.className = 'scan-status found';
 
-            currentPlayerId = data.player.id;
+            setSession(data.player, cardId, data.token);
             document.getElementById('result-name').textContent = data.player.name;
             document.getElementById('result-points').textContent = data.player.reward_points.toFixed(0);
             document.getElementById('result-cashin').textContent = '$' + data.player.total_cash_in.toFixed(2);
             document.getElementById('result-cashout').textContent = '$' + data.player.total_cash_out.toFixed(2);
 
-            const pnlEl = document.getElementById('result-pnl');
-            const pnl = data.player.pnl;
-            pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+            // Scale the bar against what they bought in for, so it reads as
+            // "how much of my buy-in am I up or down".
+            setTally('result-tally', data.player.pnl, data.player.total_cash_in);
+
+            const verdict = verdictFor(data.player.pnl);
+            const verdictEl = document.getElementById('result-net-label');
+            verdictEl.textContent = verdict.text;
+            verdictEl.style.color = verdict.color;
 
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');
         } else {
-            statusEl.textContent = 'Not registered';
+            statusEl.textContent = 'Not on file';
             statusEl.className = 'scan-status not-found';
             document.getElementById('player-result').classList.add('hidden');
             document.getElementById('unregistered-result').classList.remove('hidden');
@@ -172,16 +450,15 @@ async function showSummary() {
     showView('summary-view');
 
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/summary`);
+        const resp = await api(`/api/players/${currentPlayerId}/summary`);
         const data = await resp.json();
 
         document.getElementById('summary-name').textContent = data.player.name;
-        document.getElementById('summary-points').textContent = data.player.reward_points.toFixed(0);
+        document.getElementById('summary-points').textContent =
+            Math.floor(data.player.reward_points).toLocaleString();
 
-        const pnlEl = document.getElementById('summary-pnl');
-        const pnl = data.player.pnl;
-        pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-        pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+        setTally('summary-tally', data.player.pnl, data.player.total_cash_in);
+        setHeaderPlayer(data.player);
 
         // Show roast
         if (data.roast) {
@@ -190,7 +467,7 @@ async function showSummary() {
         } else {
             // Generate roast
             try {
-                const roastResp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/roast`, { method: 'POST' });
+                const roastResp = await api(`/api/players/${currentPlayerId}/roast`, { method: 'POST' });
                 const roastData = await roastResp.json();
                 document.getElementById('roast-text').textContent = roastData.roast;
                 document.getElementById('summary-roast').classList.remove('hidden');
@@ -218,12 +495,12 @@ function showSummaryTab(tab) {
 
 async function loadHistory() {
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/history?limit=50`);
+        const resp = await api(`/api/players/${currentPlayerId}/history?limit=50`);
         const data = await resp.json();
 
         const tbody = document.getElementById('history-body');
         if (data.events.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#888;">No events yet</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--bone-mute);">No events yet</td></tr>';
             return;
         }
 
@@ -239,24 +516,24 @@ async function loadHistory() {
             return `
                 <tr>
                     <td class="${typeClass}">${formatEventType(e.event_type)}</td>
-                    <td style="font-size:0.8rem; color:#aaa;">${e.description || ''}</td>
+                    <td style="font-size:0.8rem; color:var(--bone-dim);">${e.description || ''}</td>
                     <td style="text-align:right; font-weight:bold;">${changeText}</td>
                 </tr>
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('history-body').innerHTML = '<tr><td colspan="3" style="text-align:center; color:#f44336;">Failed to load</td></tr>';
+        document.getElementById('history-body').innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--marker);">Failed to load</td></tr>';
     }
 }
 
 async function loadDailyPnl() {
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/daily-pnl`);
+        const resp = await api(`/api/players/${currentPlayerId}/daily-pnl`);
         const data = await resp.json();
 
         const chartEl = document.getElementById('daily-chart');
         if (data.daily_pnl.length === 0) {
-            chartEl.innerHTML = '<div style="text-align:center; color:#888; width:100%; padding: 20px;">No data yet</div>';
+            chartEl.innerHTML = '<div class="empty">No data yet</div>';
             return;
         }
 
@@ -277,7 +554,7 @@ async function loadDailyPnl() {
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('daily-chart').innerHTML = '<div style="text-align:center; color:#f44336; padding: 20px;">Failed to load</div>';
+        document.getElementById('daily-chart').innerHTML = '<div style="text-align:center; color:var(--marker); padding: 20px;">Failed to load</div>';
     }
 }
 
@@ -288,6 +565,7 @@ function formatEventType(type) {
         'reward_add': '⭐ Bonus Pts',
         'reward_redeem': '🎁 Redeem',
         'registration': '📝 Registered',
+        'slot_spin': '🎰 Slots',
     };
     return labels[type] || type;
 }
@@ -312,12 +590,18 @@ async function loadLeaderboard(sortBy) {
 
         const houseEl = document.getElementById('house-pnl');
         const housePnl = data.house_pnl;
-        houseEl.textContent = (housePnl >= 0 ? 'UP' : 'DOWN') + ' $' + Math.abs(housePnl).toFixed(2);
-        houseEl.style.color = housePnl >= 0 ? '#4caf50' : '#f44336';
+        houseEl.textContent = (housePnl > 0 ? 'up $' : housePnl < 0 ? 'down $' : 'even at $') +
+                              Math.abs(housePnl).toFixed(2);
+        houseEl.style.color = housePnl > 0 ? 'var(--chip)'
+                            : housePnl < 0 ? 'var(--marker)' : 'var(--bone-dim)';
+
+        // Scale the house bar against everything wagered through it tonight.
+        const totalIn = data.players.reduce((sum, p) => sum + p.total_cash_in, 0);
+        setTally('house-tally', housePnl, totalIn);
 
         const listEl = document.getElementById('leaderboard-list');
         if (data.players.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; color:#888; padding: 20px;">No players yet</div>';
+            listEl.innerHTML = '<div class="empty">No players yet</div>';
             return;
         }
 
@@ -346,7 +630,7 @@ async function loadLeaderboard(sortBy) {
             `;
         }).join('');
     } catch (err) {
-        document.getElementById('leaderboard-list').innerHTML = '<div style="text-align:center; color:#f44336; padding: 20px;">Failed to load</div>';
+        document.getElementById('leaderboard-list').innerHTML = '<div style="text-align:center; color:var(--marker); padding: 20px;">Failed to load</div>';
     }
 }
 
@@ -427,7 +711,7 @@ async function loadRewards() {
             </div>
         `).join('');
     } catch (err) {
-        document.getElementById('rewards-container').innerHTML = '<p style="color:#f44336;">Failed to load rewards</p>';
+        document.getElementById('rewards-container').innerHTML = '<p style="color:var(--marker);">Failed to load rewards</p>';
     }
 }
 
@@ -477,6 +761,7 @@ async function adminLogin() {
         if (resp.ok) {
             const data = await resp.json();
             currentRole = data.role;
+            adminPin = pin;   // needed for the dealer-only deposit endpoints
             showView('admin-view');
             loadPlayers();
         } else {
@@ -491,6 +776,7 @@ async function adminLogin() {
 
 function adminLogout() {
     currentRole = null;
+    adminPin = null;
     backToMenu();
 }
 
@@ -498,13 +784,15 @@ function showAdminTab(tab) {
     document.querySelectorAll('#admin-view .tab').forEach(t => t.classList.remove('active'));
     event.target.classList.add('active');
 
-    document.getElementById('admin-actions').classList.add('hidden');
-    document.getElementById('admin-players').classList.add('hidden');
-    document.getElementById('admin-register').classList.add('hidden');
+    ['actions', 'pending', 'players', 'register'].forEach(name => {
+        const el = document.getElementById('admin-' + name);
+        if (el) el.classList.add('hidden');
+    });
 
     document.getElementById('admin-' + tab).classList.remove('hidden');
 
     if (tab === 'players') loadPlayers();
+    if (tab === 'pending') loadPendingDeposits();
 }
 
 async function submitAction() {
@@ -570,7 +858,7 @@ async function loadPlayers() {
 
         const listEl = document.getElementById('players-list');
         if (players.length === 0) {
-            listEl.innerHTML = '<p style="text-align:center;color:#888;">No players registered</p>';
+            listEl.innerHTML = '<div class="empty">No players registered</div>';
             return;
         }
 
@@ -578,19 +866,19 @@ async function loadPlayers() {
             <div class="player-list-item">
                 <div>
                     <div class="player-list-name">${p.name}</div>
-                    <div style="font-size:0.75rem;color:#888;">${p.card_id.substring(0, 12)}...</div>
+                    <div style="font-size:0.75rem;color:var(--bone-mute);">${p.card_id.substring(0, 12)}...</div>
                 </div>
                 <div style="text-align:right;">
                     <div class="player-list-points">${p.reward_points.toFixed(0)} pts</div>
-                    <div style="font-size:0.75rem;color:#888;">In: $${p.total_cash_in.toFixed(0)} | Out: $${p.total_cash_out.toFixed(0)}</div>
-                    <div style="font-size:0.75rem;color:${p.pnl >= 0 ? '#4caf50' : '#f44336'};">
+                    <div style="font-size:0.75rem;color:var(--bone-mute);">In: $${p.total_cash_in.toFixed(0)} | Out: $${p.total_cash_out.toFixed(0)}</div>
+                    <div style="font-size:0.75rem;color:${p.pnl >= 0 ? 'var(--chip)' : 'var(--marker)'};">
                         P/L: ${p.pnl >= 0 ? '+' : '-'}$${Math.abs(p.pnl).toFixed(2)}
                     </div>
                 </div>
             </div>
         `).join('');
     } catch (err) {
-        document.getElementById('players-list').innerHTML = '<p style="text-align:center;color:#f44336;">Failed to load</p>';
+        document.getElementById('players-list').innerHTML = '<p style="text-align:center;color:var(--marker);">Failed to load</p>';
     }
 }
 
@@ -654,14 +942,16 @@ async function searchPlayers() {
     if (!query) return;
     
     const resultsEl = document.getElementById('search-results');
-    resultsEl.innerHTML = '<div style="text-align:center; color:#888;">Searching...</div>';
+    resultsEl.innerHTML = '<div class="empty">Searching...</div>';
     
     try {
-        const resp = await fetch(`${API_BASE}/api/players/search?query=${encodeURIComponent(query)}`);
+        // Dealer lookup: PIN-gated, because the results contain card IDs.
+        const resp = await api(`/api/players/search?query=${encodeURIComponent(query)}`,
+                               { headers: { 'X-Admin-Pin': adminPin || '' } });
         const data = await resp.json();
         
         if (data.count === 0) {
-            resultsEl.innerHTML = '<div style="text-align:center; color:#888;">No players found</div>';
+            resultsEl.innerHTML = '<div class="empty">No players found</div>';
             return;
         }
         
@@ -671,11 +961,11 @@ async function searchPlayers() {
                 <div class="player-list-item" onclick="selectSearchedPlayer(${p.id})" style="cursor:pointer;">
                     <div>
                         <div class="player-list-name">${p.name}</div>
-                        <div style="font-size:0.75rem;color:#888;">${p.card_id.substring(0, 12)}...</div>
+                        <div style="font-size:0.75rem;color:var(--bone-mute);">${p.card_id.substring(0, 12)}...</div>
                     </div>
                     <div style="text-align:right;">
                         <div class="player-list-points">${p.reward_points.toFixed(0)} pts</div>
-                        <div style="font-size:0.75rem;color:${p.pnl >= 0 ? '#4caf50' : '#f44336'};">
+                        <div style="font-size:0.75rem;color:${p.pnl >= 0 ? 'var(--chip)' : 'var(--marker)'};">
                             P/L: ${pnlSign}$${Math.abs(p.pnl).toFixed(2)}
                         </div>
                     </div>
@@ -683,7 +973,7 @@ async function searchPlayers() {
             `;
         }).join('');
     } catch (err) {
-        resultsEl.innerHTML = '<div style="text-align:center; color:#f44336;">Search failed</div>';
+        resultsEl.innerHTML = '<div style="text-align:center; color:var(--marker);">Search failed</div>';
     }
 }
 
@@ -698,12 +988,18 @@ async function selectSearchedPlayer(playerId) {
             document.getElementById('result-points').textContent = player.reward_points.toFixed(0);
             document.getElementById('result-cashin').textContent = '$' + player.total_cash_in.toFixed(2);
             document.getElementById('result-cashout').textContent = '$' + player.total_cash_out.toFixed(2);
-            
-            const pnlEl = document.getElementById('result-pnl');
-            const pnl = player.pnl;
-            pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-            
+
+            setTally('result-tally', player.pnl, player.total_cash_in);
+
+            const verdict = verdictFor(player.pnl);
+            const verdictEl = document.getElementById('result-net-label');
+            verdictEl.textContent = verdict.text;
+            verdictEl.style.color = verdict.color;
+
+            // A dealer looking someone up shouldn't take over the header —
+            // that still belongs to whoever's card is scanned in.
+            if (player.card_id === currentCardId) setSession(player, currentCardId);
+
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');
             document.getElementById('search-results').innerHTML = '';
