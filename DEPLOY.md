@@ -1,4 +1,75 @@
-# Deploying to Cloud Run
+# Deploying
+
+Two paths. **Self-hosting is the recommended one** for a private table — see
+below. The Cloud Run notes follow, for when you want a public URL.
+
+---
+
+# Self-hosting (Raspberry Pi, VPS, anything Debian)
+
+One command on the box:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Dgawel77/davidsino_rewards/feature/slots-and-payments/deploy/install.sh | bash
+```
+
+It installs a venv, writes an `.env` with freshly generated PINs and card IDs,
+seeds the three players, and installs two systemd units — the app and a nightly
+backup. Re-run it any time to upgrade: it never touches `.env` or the database,
+so PINs, cards and balances survive.
+
+When it finishes it prints the URL, where the cards are, and where the backups go.
+
+## Why SQLite is the right answer here
+
+Hosted Postgres only mattered on Cloud Run because that filesystem is wiped on
+every cold start. On a box you own, the disk is the disk. SQLite is one file:
+persistent, free, nothing to sign up for, and at three players it will not
+break a sweat.
+
+It runs in **WAL mode with `synchronous=NORMAL`**, which survives an unclean
+shutdown far better than the default rollback journal — worth having when the
+whole thing might lose power mid-hand.
+
+## The SD card will die eventually
+
+They always do. So the installer sets up a nightly snapshot via
+`sqlite3 .backup` (safe on a live database, which a plain `cp` is not), keeping
+the last 14 in `~/davidsino-data/backups`.
+
+Two things worth doing beyond that:
+
+```bash
+# Ship the backups off the box — any tailnet machine will do.
+rsync -a ~/davidsino-data/backups/ mintlap:~/davidsino-backups/
+
+# Restore is just a file copy.
+sudo systemctl stop davidsino
+cp ~/davidsino-data/backups/davidsino-YYYYMMDD-HHMM.db ~/davidsino-data/davidsino.db
+sudo systemctl start davidsino
+```
+
+Migrating to a better server later is the same copy. That is the whole appeal.
+
+## Reaching it
+
+By default it listens on `0.0.0.0:8000`, so on a tailnet it is at
+`http://<tailscale-ip>:8000` and **only devices on your tailnet can see it**.
+That is the safest arrangement and it removes an entire class of problem — the
+public domain was being scanned for `/.env` and `/wp-config.php` within a day.
+
+If you want friends to play without installing Tailscale:
+
+```bash
+sudo tailscale funnel 8000
+```
+
+That gives a public HTTPS URL on your `*.ts.net` name, with no ports opened on
+your router and TLS handled for you. Turn it off with `sudo tailscale funnel off`.
+
+---
+
+# Cloud Run
 
 A small private table for a few friends, on the free tier.
 

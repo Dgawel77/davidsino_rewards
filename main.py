@@ -45,6 +45,20 @@ engine = create_engine(
     # FastAPI's threadpool. Harmless for a single-machine dev run.
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
+if DATABASE_URL.startswith("sqlite"):
+    # Write-ahead logging survives an unclean shutdown far better than the
+    # default rollback journal, which matters when the whole thing lives on an
+    # SD card in a Raspberry Pi that might lose power mid-hand.
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

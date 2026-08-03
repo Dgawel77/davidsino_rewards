@@ -18,7 +18,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8000:8080"   # container listens on $PORT (8080)
     environment:
       DATABASE_URL: postgresql://davidsino:davidsino_pass@db:5432/davidsino
       ADMIN_PIN: ${ADMIN_PIN:-1234}
