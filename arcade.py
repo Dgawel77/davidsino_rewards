@@ -222,6 +222,11 @@ def plinko_rtp(risk: str) -> float:
     return sum(p * v for p, v in zip(probs, PLINKO_TABLES[risk]))
 
 
+# Dropping several at once is just several independent drops, each with its own
+# nonce -- so every ball is separately verifiable rather than one draw smeared
+# across a handful of balls.
+PLINKO_MAX_BALLS = 10
+
 PLINKO = {
     "key": "plinko",
     "name": "Plinko",
@@ -230,6 +235,7 @@ PLINKO = {
     "max_bet": 2500,
     "live": False,
     "rows": PLINKO_ROWS,
+    "max_balls": PLINKO_MAX_BALLS,
     "risks": {
         risk: {
             "label": risk.capitalize(),
@@ -242,6 +248,7 @@ PLINKO = {
     "rules": [
         f"{PLINKO_ROWS} rows of pins, so {PLINKO_ROWS + 1} buckets",
         "Each pin is a coin flip drawn from the seed — the whole path is fixed before the drop",
+        f"Drop up to {PLINKO_MAX_BALLS} balls at once; each one is its own bet and its own nonce",
         "Higher risk empties the middle to pay the edges; the return is the same either way",
         "House edge 1% on every risk setting",
     ],
@@ -421,6 +428,7 @@ def game_list() -> list:
         if key == "plinko":
             entry["rows"] = g["rows"]
             entry["risks"] = g["risks"]
+            entry["max_balls"] = g["max_balls"]
         if key == "mines":
             entry["tiles"] = g["tiles"]
             entry["min_mines"] = g["min_mines"]

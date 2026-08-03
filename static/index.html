@@ -815,7 +815,25 @@
             position: absolute; font-size: 1.5rem; line-height: 1;
             transform: translate(-50%, 50%); will-change: left, bottom;
         }
-        .crash-rocket.gone { filter: grayscale(1); opacity: 0.5; }
+        .crash-rocket.gone { filter: grayscale(0.2); opacity: 0.9; }
+        /* A rocket that just translates reads as a sticker. Tilt it into the
+           climb and let the thrust shudder. */
+        .crash-rocket.lit {
+            animation: thrust 0.22s ease-in-out infinite alternate;
+            filter: drop-shadow(0 0 8px rgba(201, 162, 39, 0.55));
+        }
+        @keyframes thrust {
+            from { transform: translate(-50%, 50%) rotate(-38deg) scale(1); }
+            to   { transform: translate(-50%, 50%) rotate(-33deg) scale(1.07); }
+        }
+        .crash-trail {
+            position: absolute; width: 9px; height: 9px; border-radius: 50%;
+            background: radial-gradient(circle, var(--brass) 0%, rgba(201,162,39,0) 70%);
+            pointer-events: none;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .crash-rocket.lit { animation: none; transform: translate(-50%, 50%) rotate(-35deg); }
+        }
         .crash-grid-line {
             position: absolute; left: 0; right: 0; height: 1px;
             background: var(--felt-3);
@@ -838,6 +856,19 @@
             position: absolute; width: 13px; height: 13px; border-radius: 50%;
             background: var(--brass); transform: translate(-50%, -50%);
             box-shadow: 0 0 9px rgba(201, 162, 39, 0.6);
+            will-change: left, top;
+        }
+        /* A brief squash on each peg — the cheapest way to sell weight. */
+        .plinko-ball.squash { animation: ballsquash 0.13s ease-out; }
+        @keyframes ballsquash {
+            0%   { transform: translate(-50%, -50%) scale(1.3, 0.7); }
+            100% { transform: translate(-50%, -50%) scale(1, 1); }
+        }
+        .bucket-n {
+            display: block; font-size: 0.62rem; font-weight: 700; line-height: 1;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .plinko-ball.squash { animation: none; }
         }
         .plinko-buckets { display: flex; gap: 2px; max-width: 420px; margin: 0 auto; }
         .plinko-bucket {

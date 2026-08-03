@@ -148,6 +148,8 @@ function resumeRound() {
 
 function tablesBack() {
     stopAuto(null);
+    if (typeof stopPlinko === 'function') stopPlinko();
+    if (typeof stopCrashClimb === 'function') stopCrashClimb();
     showTablesLobby();
 }
 
@@ -253,7 +255,16 @@ function renderBetPicker() {
 
     // The arcade games pick a risk setting rather than a bet type.
     if (currentTable.key === 'plinko') {
-        el.innerHTML = Object.entries(currentTable.risks).map(([key, spec]) => `
+        el.innerHTML = `
+            <div class="bet-option" onclick="adjustBalls(-1)" style="flex:0 0 54px;">
+                <div class="bet-option-label">−</div></div>
+            <div class="bet-option selected" style="flex:0 0 96px;">
+                <div class="bet-option-label" id="plinko-ball-count">${plinkoBalls_count === 1
+                    ? '1 ball' : plinkoBalls_count + ' balls'}</div>
+                <div class="bet-option-edge">stake each</div></div>
+            <div class="bet-option" onclick="adjustBalls(1)" style="flex:0 0 54px;">
+                <div class="bet-option-label">+</div></div>
+        ` + Object.entries(currentTable.risks).map(([key, spec]) => `
             <div class="bet-option ${key === plinkoRisk ? 'selected' : ''}"
                  data-bet="${key}" onclick="selectPlinkoRisk('${key}')">
                 <div class="bet-option-label">${spec.label}</div>
@@ -480,7 +491,7 @@ async function dealTable() {
     const body = { card_id: currentCardId, game: currentTable.key, bet: tableBet };
     if (tableBetType) body.bet_type = tableBetType;
     if (currentTable.key === 'fan_tan') body.picks = tablePicks;
-    if (currentTable.key === 'plinko') body.risk = plinkoRisk;
+    if (currentTable.key === 'plinko') { body.risk = plinkoRisk; body.balls = plinkoBalls_count; }
     if (currentTable.key === 'mines') body.mines = mineCount;
     if (currentTable.key === 'crash' && crashTarget) body.target = crashTarget;
 
@@ -533,17 +544,27 @@ function renderInstantResult(data) {
 
     if (data.game === 'plinko') {
         animatePlinko(data);
-        showTableResult(`${data.multiplier}x`, data.net > 0 ? 'win' : (data.net === 0 ? '' : 'lose'));
+        const balls = data.balls || 1;
+        // With several balls the first ball's multiplier means nothing — what
+        // matters is what the whole handful returned.
+        const overall = data.bet ? (data.payout / data.bet) : 0;
+        const label = balls > 1
+            ? `${balls} balls · ${overall.toFixed(2)}x overall`
+            : `${data.multiplier}x`;
+        showTableResult(label, data.net > 0 ? 'win' : (data.net === 0 ? '' : 'lose'));
         updateTableBalance(tableBalance, data.net);
-        const delay = motionOn() ? 12 * 105 + 250 : 200;
+
+        // Wait for the last ball to land before calling it.
+        const flight = motionOn() ? 2600 + balls * 130 : 200;
         setTimeout(() => {
             const net = data.net;
             if (net > 0) SFX.win(); else if (net === 0) SFX.push(); else SFX.lose();
-            showTableResult(net > 0 ? `${data.multiplier}x — +${Math.round(net).toLocaleString()} points`
-                                    : `${data.multiplier}x — ${net === 0 ? 'even'
-                                       : '−' + Math.abs(Math.round(net)).toLocaleString() + ' points'}`,
+            const tail = net > 0 ? `+${Math.round(net).toLocaleString()} points`
+                       : net === 0 ? 'even'
+                       : `−${Math.abs(Math.round(net)).toLocaleString()} points`;
+            showTableResult(`${label} — ${tail}`,
                             net > 0 ? 'win' : (net === 0 ? '' : 'lose'));
-        }, delay);
+        }, flight);
         return;
     }
 
@@ -559,7 +580,7 @@ function renderInstantResult(data) {
         }
         if (data.player.length > 2) bacSeq.player.push(anim ? seq++ : null);
         if (data.banker.length > 2) bacSeq.banker.push(anim ? seq++ : null);
-        playDealSounds(seq || data.player.length + data.banker.length);
+        playDealSounds(dealSeqs(bacSeq.player, bacSeq.banker));
         stage.innerHTML = `
             <div class="hand-block">
                 <div class="hand-label">Player<span class="hand-total">${data.player_points}</span></div>
@@ -735,23 +756,44 @@ function renderBlackjack(round) {
     };
 
     if (holeFlip >= 0) SFX.flip();
-    playDealSounds(dealtCount);
+    playDealSounds(dealSeqs(dealerSeq, ...handSeqs));
 
     renderActions(round.actions);
 }
 
-// One papery skim per new card, spaced to match the visual stagger.
-function playDealSounds(count) {
-    if (!count) return;
-    const gap = motionOn() ? 0.19 : 0.06;
-    for (let i = 0; i < Math.min(count, 8); i++) SFX.deal(i * gap);
+// Must match the animation-delay step in .playing-card.deal-anim.
+const DEAL_STAGGER = 0.19;
+
+// Collect the deal-order positions actually in play, dropping the nulls that
+// mark cards already on the felt.
+function dealSeqs() {
+    const out = [];
+    for (const arr of arguments) {
+        if (!arr) continue;
+        for (const s of arr) if (s !== null && s !== undefined) out.push(s);
+    }
+    return out;
 }
 
-// Beads land far too fast to click one-for-one, so play a sparse run of chips
-// across the same window and finish on the remainder.
+// One skim per card, fired at the moment that card lands.
+//
+// Scheduling is driven by the card's own position in the deal rather than by a
+// count, so the sound cannot drift out of step with the animation, and there is
+// no cap — a six-card hand gets six sounds, not the first eight of anything.
+function playDealSounds(seqs) {
+    if (!seqs || !seqs.length) return;
+    const anim = motionOn();
+    const stagger = anim ? DEAL_STAGGER : 0.055;
+    for (const seq of seqs) SFX.deal(seq * stagger, seq);
+}
+
+// Beads arrive far too fast to click one-for-one -- 119 of them inside a second
+// would be a buzz, not a pour. The run scales with the pile instead, so a big
+// handful audibly takes longer to count out than a small one, and the remainder
+// lands last.
 function playBeadSounds(count) {
     const window = 0.9;
-    const ticks = Math.min(10, count);
+    const ticks = Math.max(4, Math.min(18, Math.round(count / 6)));
     for (let i = 0; i < ticks; i++) SFX.chip((i / ticks) * window);
     SFX.flip(window + 0.05);
 }
@@ -774,7 +816,8 @@ function renderMississippi(round) {
     const holeNew = Math.max(0, round.hole.length - lastStudCounts.hole);
     const communityNew = Math.max(0, round.community.length - lastStudCounts.community);
     lastStudCounts = { hole: round.hole.length, community: round.community.length };
-    playDealSounds(holeNew + communityNew);
+    playDealSounds(dealSeqs(seqTail(round.hole, holeNew, 0, anim),
+                            seqTail(round.community, communityNew, holeNew, anim)));
 
     stage.innerHTML = `
         <div class="hand-block">

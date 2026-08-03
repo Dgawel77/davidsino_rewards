@@ -277,6 +277,7 @@ class TableDealRequest(BaseModel):
     bet_type: Optional[str] = None
     picks: Optional[List[int]] = None
     risk: Optional[str] = None        # plinko
+    balls: Optional[int] = None       # plinko: drop several at once
     mines: Optional[int] = None       # mines
     target: Optional[float] = None    # crash auto cash-out
 
@@ -1538,9 +1539,15 @@ def table_deal(request: TableDealRequest, db: Session_ = Depends(get_db),
     player = _table_player(db, request.card_id)
 
     # Mississippi Stud can be raised up to 9x the ante beyond it, so make sure
-    # the player can at least cover the ante plus a 1x on every street.
-    upfront = request.bet * 4 if request.game == "mississippi" else request.bet
-    bet = _check_bet(game, request.bet, player, need=upfront if request.game == "mississippi" else None)
+    # the player can at least cover the ante plus a 1x on every street. Plinko
+    # charges the stake once per ball, so N balls need N times the stake.
+    need = None
+    if request.game == "mississippi":
+        need = request.bet * 4
+    elif request.game == "plinko":
+        balls = max(1, min(int(request.balls or 1), arcade_engine.PLINKO_MAX_BALLS))
+        need = request.bet * balls
+    bet = _check_bet(game, request.bet, player, need=need)
 
     # One live hand at a time. Without this a player could deal blackjack, walk
     # off, deal a stud hand, and leave the first one open with its points already
@@ -1567,10 +1574,22 @@ def table_deal(request: TableDealRequest, db: Session_ = Depends(get_db),
     if _is_instant(request.game):
         try:
             if request.game == "plinko":
-                drop = arcade_engine.plinko_drop(
-                    request.risk or "medium", seed.server_seed, seed.client_seed, nonce)
-                settled = arcade_engine.plinko_settle(drop, bet)
-                detail = settled
+                balls = max(1, min(int(request.balls or 1), arcade_engine.PLINKO_MAX_BALLS))
+                # Each ball is its own bet at its own nonce, so each is separately
+                # verifiable. The seed row is already locked, so they cannot collide.
+                drops = []
+                for b in range(balls):
+                    d = arcade_engine.plinko_drop(
+                        request.risk or "medium", seed.server_seed, seed.client_seed, nonce + b)
+                    drops.append(arcade_engine.plinko_settle(d, bet))
+                seed.nonce = nonce + balls
+                total_payout = round(sum(d["payout"] for d in drops), 2)
+                settled = {"payout": total_payout,
+                           "verdict": ("win" if total_payout > bet * balls
+                                       else "push" if total_payout == bet * balls else "lose")}
+                detail = {"balls": balls, "drops": drops, "bet_per_ball": bet,
+                          **drops[0], "payout": total_payout}
+                bet = round(bet * balls, 2)
             elif request.game == "baccarat":
                 deck = tables_engine.deck_for("baccarat", seed.server_seed, seed.client_seed, nonce)
                 deal = tables_engine.baccarat_deal(deck)
@@ -1741,6 +1760,10 @@ def get_table_round(round_id: int, card_id: str = Query(...), db: Session_ = Dep
     """Recover a hand that was interrupted — a closed tab, a dead phone."""
     require_self(me, card_id)
     player = _table_player(db, card_id)
+    # Polling is how the client learns it busted, so this has to be a point where
+    # a finished rocket actually settles.
+    _expire_stale_crash(db, player)
+    db.commit()
     rnd = db.query(TableRound).filter(TableRound.id == round_id).first()
     if not rnd or rnd.player_id != player.id:
         raise HTTPException(status_code=404, detail="Round not found")

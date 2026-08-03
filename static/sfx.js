@@ -89,9 +89,19 @@ function noise(when, dur, freq, q, gain = 0.2) {
 
 const SFX = {
     // A card skimming onto the felt.
-    deal(delay = 0) {
-        noise(delay, 0.13, 1900, 1.1, 0.16);
-        tone(320, delay + 0.02, 0.07, 'triangle', 0.05);
+    //
+    // `v` is the card's position in the deal. Identical samples in a row read as
+    // a metronome rather than a dealer, so the brightness, length and timing
+    // shift slightly with it — deterministically, so a hand always sounds the
+    // same way twice.
+    deal(delay = 0, v = 0) {
+        const i = Math.abs(Math.round(v));
+        const bright = 1620 + (i % 5) * 145;        // where the paper sits
+        const body = 0.112 + (i % 3) * 0.014;       // how long it skims
+        const q = 0.95 + (i % 4) * 0.16;            // how tight the hiss is
+        const slop = ((i * 37) % 13) / 1000;        // a few ms of human timing
+        noise(delay + slop, body, bright, q, 0.155);
+        tone(298 + (i % 4) * 24, delay + slop + 0.02, 0.07, 'triangle', 0.05);
     },
     // The hole card turning over — same paper, lower and slower.
     flip(delay = 0) {

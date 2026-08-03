@@ -221,6 +221,19 @@ class TestPlinko(unittest.TestCase):
         b = arcade.plinko_drop("high", SS, CS, 9)
         self.assertEqual(a["path"], b["path"], "risk must not steer the ball")
 
+    def test_multi_ball_is_declared(self):
+        spec = [g for g in arcade.game_list() if g["key"] == "plinko"][0]
+        self.assertEqual(spec["max_balls"], arcade.PLINKO_MAX_BALLS)
+        self.assertGreater(arcade.PLINKO_MAX_BALLS, 1)
+
+    def test_consecutive_nonces_give_independent_balls(self):
+        """
+        Dropping several at once is several separate drops, not one draw reused —
+        otherwise every ball in a handful would land in the same bucket.
+        """
+        paths = [tuple(arcade.plinko_drop("medium", SS, CS, n)["path"]) for n in range(10)]
+        self.assertEqual(len(set(paths)), len(paths), "balls shared a path")
+
     def test_unknown_risk_rejected(self):
         with self.assertRaises(ValueError):
             arcade.plinko_drop("insane", SS, CS, 0)
