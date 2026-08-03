@@ -612,7 +612,9 @@
         .card-row {
             display: flex; flex-wrap: wrap; gap: 7px;
             justify-content: center; align-items: center;
-            min-height: 84px;
+            /* Fixed, so a face-down card becoming a face-up one, or a total
+               gaining a "soft" suffix, cannot nudge the row by a pixel. */
+            height: 84px;
         }
         .playing-card {
             width: 54px; height: 76px;
@@ -651,6 +653,7 @@
         .hand-label {
             font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.18em;
             text-transform: uppercase; color: var(--bone-mute); margin-bottom: 7px;
+            height: 15px; line-height: 15px;
         }
         .hand-label .hand-total { color: var(--bone); margin-left: 6px; }
         .hand-block.active { position: relative; }
@@ -675,11 +678,42 @@
             touch-action: manipulation;
         }
         .table-actions .btn:active { transform: translateY(1px); }
+        /* Disabled slots stay in place and keep their footprint — the grid must
+           never reflow, or a button moves out from under the pointer. */
+        .table-actions .btn:disabled {
+            opacity: 0.32;
+            cursor: default;
+            pointer-events: none;
+        }
+        .table-actions .btn:disabled:active { transform: none; }
+        .btn-key {
+            display: block;
+            font-family: var(--mono);
+            font-size: 0.56rem;
+            letter-spacing: 0.16em;
+            opacity: 0.55;
+            margin-top: 3px;
+            text-transform: uppercase;
+        }
+        #table-deal-btn { min-height: 56px; }
+        #table-deal-btn:disabled { opacity: 0.32; cursor: default; }
+        .bet-adjust:disabled { opacity: 0.32; cursor: default; }
+        .bet-option.disabled { opacity: 0.4; pointer-events: none; }
+
+        /* Reserve the felt so cards arriving or a verdict appearing never pushes
+           the buttons down the screen. */
+        /* Fixed, not min: the verdict line must occupy the same box whether it
+           holds text or nothing, or settling nudges everything below it. */
+        .seat { min-height: 152px; }
+        .seat-verdict { height: 16px; line-height: 16px; margin-top: 9px; overflow: hidden; }
 
         /* ---------- the blackjack felt ---------- */
         .bank-strip {
-            display: flex; align-items: baseline; justify-content: center; gap: 10px;
-            padding: 12px 14px;
+            /* Fixed height and centred: the +/- delta appearing after a hand
+               must not reflow the strip and shove the felt down a pixel. */
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            height: 62px;
+            padding: 0 14px;
             margin: 0 0 6px;
             background: var(--felt-2);
             border: 1px solid var(--felt-3);
@@ -703,6 +737,7 @@
         .seat-head {
             display: flex; align-items: center; justify-content: center; gap: 12px;
             margin-bottom: 9px;
+            height: 38px;
         }
         .seat-name {
             font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.2em;
@@ -817,15 +852,41 @@
         .num-pick.selected { border-color: var(--brass); background: rgba(201,162,39,0.14); color: var(--brass); }
         .num-pick.hit { border-color: var(--chip); color: var(--chip); }
 
+        /* The bead pile is reserved at full height so the pile arriving never
+           pushes the Deal button down the screen. */
         .bead-line {
             display: flex; flex-wrap: wrap; gap: 4px;
-            justify-content: center; margin: 14px 0 6px;
+            justify-content: center; align-content: flex-start;
+            margin: 14px 0 6px;
+            min-height: 92px;
         }
         .bead {
             width: 11px; height: 11px; border-radius: 50%;
             background: var(--felt-3); border: 1px solid var(--felt-3);
         }
         .bead.final { background: var(--brass); border-color: var(--brass); }
+        /* Beads come up one after another, then the remainder lights. */
+        .bead.rise {
+            animation: beadrise 0.34s ease-out backwards;
+            animation-delay: calc(var(--i, 0) * var(--bead-step, 0.012s));
+        }
+        @keyframes beadrise {
+            0%   { opacity: 0; transform: translateY(9px) scale(0.4); }
+            70%  { opacity: 1; transform: translateY(-2px) scale(1.12); }
+            100% { opacity: 1; transform: none; }
+        }
+        .bead.final.rise {
+            animation: beadfinal 0.5s ease-out backwards;
+            animation-delay: calc(var(--i, 0) * var(--bead-step, 0.012s));
+        }
+        @keyframes beadfinal {
+            0%   { opacity: 0; transform: translateY(9px) scale(0.4); background: var(--felt-3); }
+            60%  { opacity: 1; transform: translateY(-5px) scale(1.5); }
+            100% { opacity: 1; transform: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bead.rise, .bead.final.rise { animation: none !important; }
+        }
 
         .street-dots { display: flex; gap: 6px; justify-content: center; margin: 10px 0 2px; }
         .street-dot {
@@ -838,6 +899,7 @@
         .table-note {
             font-size: 0.76rem; color: var(--bone-mute);
             margin-top: 10px; line-height: 1.45;
+            min-height: 33px;
         }
         .wager-line {
             font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
@@ -880,7 +942,10 @@
         @keyframes reelblur { 50% { opacity: 0.55; } }
 
         .spin-result {
-            min-height: 24px;
+            /* Fixed height: the result line appearing must not move the felt. */
+            height: 24px;
+            line-height: 24px;
+            overflow: hidden;
             font-family: var(--mono);
             font-size: 0.8rem;
             letter-spacing: 0.05em;
@@ -1692,6 +1757,8 @@
                         <span class="pref-dot"></span><span id="pref-sound-label">Sound</span></button>
                     <button class="pref-toggle" id="pref-motion" onclick="toggleMotion()">
                         <span class="pref-dot"></span><span id="pref-motion-label">Animation</span></button>
+                    <button class="pref-toggle hidden" id="pref-auto" onclick="toggleAuto()">
+                        <span class="pref-dot"></span><span id="pref-auto-label">Auto</span></button>
                 </div>
 
                 <div class="slot-actions">

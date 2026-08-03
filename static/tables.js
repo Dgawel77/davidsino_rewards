@@ -20,6 +20,13 @@ let lastStudCounts = { hole: 0, community: 0 };
 function refreshPrefButtons() {
     const s = document.getElementById('pref-sound');
     const mo = document.getElementById('pref-motion');
+    // Auto mode plays basic strategy, which only exists for blackjack.
+    const auto = document.getElementById('pref-auto');
+    if (auto) {
+        auto.classList.toggle('hidden', !currentTable || !AUTO_GAMES.has(currentTable.key));
+        auto.classList.toggle('on', autoPlay);
+        document.getElementById('pref-auto-label').textContent = autoPlay ? 'Auto on' : 'Auto';
+    }
     if (s) {
         s.classList.toggle('on', soundOn());
         document.getElementById('pref-sound-label').textContent =
@@ -140,6 +147,7 @@ function resumeRound() {
 }
 
 function tablesBack() {
+    stopAuto(null);
     showTablesLobby();
 }
 
@@ -170,15 +178,19 @@ async function openTable(key) {
 }
 
 function enterTableView() {
+    // Auto mode belongs to one table; changing tables must not leave it running.
+    if (!currentTable || !AUTO_GAMES.has(currentTable.key)) stopAuto(null);
     showView('tables-play-view');
     document.getElementById('table-title').textContent = currentTable.name;
     document.getElementById('table-tagline').textContent = currentTable.tagline;
     document.getElementById('table-result').textContent = '';
     document.getElementById('table-result').className = 'spin-result';
     document.getElementById('table-rules').classList.add('hidden');
-    document.getElementById('table-actions').innerHTML = '';
+    // Render the action grid greyed rather than empty, so the Deal button below
+    // it sits at the same y before the first hand as it does during one.
+    renderActions([]);
     document.getElementById('table-wager').classList.add('hidden');
-    document.getElementById('table-bet-controls').classList.remove('hidden');
+    setBettingEnabled(true);
     document.getElementById('table-bet-label').textContent =
         currentTable.key === 'mississippi' ? 'Ante' : 'Bet per hand';
 
@@ -279,8 +291,11 @@ function renderNumberPicker() {
     const stage = document.getElementById('table-stage');
     if (currentTable.key !== 'fan_tan') return;
     const need = currentTable.bets[tableBetType].picks;
+    // The empty bead line stays in the layout so the pile arriving does not
+    // shove the Deal button a hundred pixels down the page.
     stage.innerHTML = `
         <div class="hand-label">Pick ${need} number${need > 1 ? 's' : ''}</div>
+        <div class="bead-line"></div>
         <div class="num-picker">
             ${[1, 2, 3, 4].map(n => `
                 <div class="num-pick ${tablePicks.includes(n) ? 'selected' : ''}"
@@ -304,11 +319,19 @@ function toggleFanPick(n) {
 }
 
 // ===== Rendering the felt =====
-function cardHTML(card, animIndex) {
-    // animIndex >= 0 means this card is new and should slide in, staggered by
-    // its position in the run of new cards. null means paint it already landed.
-    const cls = animIndex === null ? '' : ' deal-anim';
-    const style = animIndex === null ? '' : ` style="--i:${animIndex}"`;
+// `seq` is this card's place in the deal order across the WHOLE table, not just
+// its own row — otherwise the dealer's first card and the player's first card
+// both land at once instead of alternating the way a real deal does.
+// null means the card is already on the felt: paint it, don't animate it.
+function cardHTML(card, seq, flip) {
+    let cls = '';
+    let style = '';
+    if (flip) {
+        cls = ' flip-anim';
+    } else if (seq !== null && seq !== undefined) {
+        cls = ' deal-anim';
+        style = ` style="--i:${seq}"`;
+    }
 
     if (!card || card === '??') {
         return `<div class="playing-card face-down${cls}"${style}>
@@ -323,10 +346,21 @@ function cardHTML(card, animIndex) {
             </div>`;
 }
 
-// `newCount` is how many of the trailing cards arrived since the last paint.
-function cardsHTML(cards, newCount) {
-    const first = cards.length - (newCount || 0);
-    return cards.map((c, i) => cardHTML(c, i >= first ? i - first : null)).join('');
+// `seqs` is one entry per card: a deal-order position, or null for "already there".
+function cardsHTML(cards, seqs, flipIndex) {
+    return cards.map((c, i) =>
+        cardHTML(c, seqs ? seqs[i] : null, flipIndex === i)).join('');
+}
+
+// Convenience for the games that simply deal every card at once.
+function seqAll(cards, animate) {
+    return animate ? cards.map((_, i) => i) : cards.map(() => null);
+}
+
+// Trailing `n` cards are new; everything before them is already on the felt.
+function seqTail(cards, n, start, animate) {
+    const first = cards.length - n;
+    return cards.map((_, i) => (animate && i >= first ? start + (i - first) : null));
 }
 
 function renderIdleStage() {
@@ -334,25 +368,46 @@ function renderIdleStage() {
     if (currentTable.key === 'fan_tan') { renderNumberPicker(); return; }
     if (currentTable.key === 'baccarat') {
         stage.innerHTML = `
-            <div class="hand-block"><div class="hand-label">Player</div>
-                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div></div>
-            <div class="hand-block"><div class="hand-label">Banker</div>
-                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div></div>`;
+            <div class="hand-block">
+                <div class="hand-label">Player<span class="hand-total">–</span></div>
+                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div>
+            </div>
+            <div class="hand-block">
+                <div class="hand-label">Banker<span class="hand-total">–</span></div>
+                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div>
+            </div>
+            <div class="table-note"></div>`;
         return;
     }
     if (currentTable.key === 'blackjack') {
-        stage.innerHTML = `
-            <div class="hand-block"><div class="hand-label">Dealer</div>
-                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div></div>
-            <div class="hand-block"><div class="hand-label">You</div>
-                <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div></div>`;
+        // Deliberately the same markup a live hand uses, down to the empty
+        // verdict line — an idle felt that is shorter than a dealt one would
+        // move every button below it the moment you press Deal.
+        const seat = (name, slots, cls) => `
+            <div class="seat ${cls}">
+                ${cls === 'you' ? '' : `<div class="seat-head">
+                    <span class="seat-name">${name}</span>
+                    <span class="seat-total">–</span></div>`}
+                <div class="card-row">${'<div class="card-slot"></div>'.repeat(slots)}</div>
+                ${cls === 'you' ? `<div class="seat-head">
+                    <span class="seat-name">${name}</span>
+                    <span class="seat-total">–</span></div>` : ''}
+                <div class="seat-verdict"></div>
+            </div>`;
+        stage.innerHTML = seat('Dealer', 2, '') + seat('You', 2, 'you');
         return;
     }
+    // Same skeleton the live hand renders, street dots and note included, so
+    // dealing does not move the buttons.
     stage.innerHTML = `
         <div class="hand-block"><div class="hand-label">Your two</div>
             <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div></div></div>
         <div class="hand-block"><div class="hand-label">The board</div>
-            <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div><div class="card-slot"></div></div></div>`;
+            <div class="card-row"><div class="card-slot"></div><div class="card-slot"></div><div class="card-slot"></div></div></div>
+        <div class="street-dots">
+            <div class="street-dot"></div><div class="street-dot"></div><div class="street-dot"></div>
+        </div>
+        <div class="table-note">Ante up, then raise or fold on each of three streets.</div>`;
 }
 
 // ===== Dealing =====
@@ -413,7 +468,19 @@ async function dealTable() {
 
 function setDealEnabled(on) {
     const btn = document.getElementById('table-deal-btn');
-    if (btn) { btn.disabled = !on; btn.textContent = on ? 'Deal' : 'Dealing…'; }
+    if (!btn) return;
+    btn.disabled = !on;
+    btn.innerHTML = on ? 'Deal<span class="btn-key">space</span>' : 'Dealing…';
+}
+
+// Betting controls stay on screen at all times and are greyed while a hand is
+// live. Hiding them used to shift every button below by their height.
+function setBettingEnabled(on) {
+    setDealEnabled(on);
+    document.querySelectorAll('#table-bet-controls .bet-adjust')
+        .forEach(b => { b.disabled = !on; });
+    document.querySelectorAll('#table-bet-picker .bet-option')
+        .forEach(b => b.classList.toggle('disabled', !on));
 }
 
 // ===== Instant games: baccarat and fan-tan =====
@@ -423,25 +490,41 @@ function renderInstantResult(data) {
 
     if (data.game === 'baccarat') {
         const winner = data.outcome;
-        playDealSounds(data.player.length + data.banker.length);
+        // Punto banco deals player, banker, player, banker, then any third
+        // cards — player's first. Animate them in exactly that order.
+        const bacSeq = { player: [], banker: [] };
+        let seq = 0;
+        for (let i = 0; i < 2; i++) {
+            bacSeq.player.push(anim ? seq++ : null);
+            bacSeq.banker.push(anim ? seq++ : null);
+        }
+        if (data.player.length > 2) bacSeq.player.push(anim ? seq++ : null);
+        if (data.banker.length > 2) bacSeq.banker.push(anim ? seq++ : null);
+        playDealSounds(seq || data.player.length + data.banker.length);
         stage.innerHTML = `
             <div class="hand-block">
                 <div class="hand-label">Player<span class="hand-total">${data.player_points}</span></div>
-                <div class="card-row">${cardsHTML(data.player, anim ? data.player.length : 0)}</div>
+                <div class="card-row">${cardsHTML(data.player, bacSeq.player)}</div>
             </div>
             <div class="hand-block">
                 <div class="hand-label">Banker<span class="hand-total">${data.banker_points}</span></div>
-                <div class="card-row">${cardsHTML(data.banker, anim ? data.banker.length : 0)}</div>
+                <div class="card-row">${cardsHTML(data.banker, bacSeq.banker)}</div>
             </div>
             <div class="table-note">${data.natural ? 'Natural — no third card drawn. ' : ''}
                 ${winner === 'tie' ? 'A tie.' : `${winner === 'player' ? 'Player' : 'Banker'} wins with ${
                     winner === 'player' ? data.player_points : data.banker_points}.`}</div>`;
     } else {
+        // Spread the whole pile over a fixed window so 24 beads and 119 beads
+        // take about the same time to come up — long enough to watch, short
+        // enough that auto mode isn't waiting on it.
+        const step = (900 / Math.max(1, data.beads)).toFixed(1);
         const beads = Array.from({ length: data.beads }, (_, i) =>
-            `<div class="bead${i >= data.beads - data.result ? ' final' : ''}"></div>`).join('');
+            `<div class="bead${i >= data.beads - data.result ? ' final' : ''}${anim ? ' rise' : ''}"
+                  style="--i:${i}"></div>`).join('');
+        if (anim) playBeadSounds(data.beads);
         stage.innerHTML = `
             <div class="hand-label">${data.beads} beads — ${data.result} left over</div>
-            <div class="bead-line">${beads}</div>
+            <div class="bead-line" style="--bead-step:${step}ms">${beads}</div>
             <div class="num-picker">
                 ${[1, 2, 3, 4].map(n => `
                     <div class="num-pick ${n === data.result ? 'hit' : (tablePicks.includes(n) ? 'selected' : '')}"
@@ -470,7 +553,7 @@ function renderRound(round) {
     // While a hand is live the only way to stake more is the action buttons, so
     // the deal controls stay out of the way. Once it settles, "Next hand" is the
     // single way forward — showing Deal as well was two buttons for one job.
-    document.getElementById('table-bet-controls').classList.add('hidden');
+    setBettingEnabled(!live);
 
     if (round.game === 'blackjack') renderBlackjack(round);
     else renderMississippi(round);
@@ -495,7 +578,7 @@ function renderRound(round) {
         // hand stays on screen underneath until the next deal replaces it.
         setTimeout(() => {
             if (activeRound) return;                       // a new hand already began
-            document.getElementById('table-bet-controls').classList.remove('hidden');
+            setBettingEnabled(true);
             renderActions([]);
         }, motionOn() ? 900 : 250);
     }
@@ -518,10 +601,36 @@ function renderBlackjack(round) {
     const live = round.stage === 'player';
     const anim = motionOn();
 
-    // Only cards that are new since the last paint get the dealing animation,
-    // so a hit slides one card in rather than re-dealing the whole table.
     const prev = lastBlackjackCounts;
     const dealerNew = Math.max(0, round.dealer.length - (prev.dealer || 0));
+    const handNew = round.hands.map((h, i) => Math.max(0, h.cards.length - (prev.hands[i] || 0)));
+
+    // The hole card turns over when the hand ends: same card count, but the
+    // placeholder becomes a real card. That is a flip, not a deal.
+    const holeFlip = anim && prev.dealerHidden && !round.dealer.includes('??') ? 1 : -1;
+
+    let dealerSeq;
+    let handSeqs;
+    let dealtCount;
+
+    const opening = dealerNew === 2 && handNew.length === 1 && handNew[0] === 2;
+    if (opening) {
+        // A real deal alternates: player, dealer, player, dealer.
+        handSeqs = [anim ? [0, 2] : [null, null]];
+        dealerSeq = anim ? [1, 3] : [null, null];
+        dealtCount = 4;
+    } else {
+        // Any other paint is a draw: the player's new cards, then the dealer's.
+        let seq = 0;
+        handSeqs = round.hands.map((h, i) => {
+            const s = seqTail(h.cards, handNew[i], seq, anim);
+            seq += handNew[i];
+            return s;
+        });
+        dealerSeq = seqTail(round.dealer, dealerNew, seq, anim);
+        seq += dealerNew;
+        dealtCount = seq;
+    }
 
     const dealerTotal = round.dealer_total != null ? round.dealer_total : '';
     const dealerBust = typeof dealerTotal === 'number' && dealerTotal > 21;
@@ -529,7 +638,6 @@ function renderBlackjack(round) {
     const seats = round.hands.map((h, i) => {
         const isTurn = live && i === round.active;
         const label = round.hands.length > 1 ? `Hand ${i + 1}` : 'You';
-        const newCards = Math.max(0, h.cards.length - (prev.hands[i] || 0));
         const totalCls = [
             'seat-total',
             h.status === 'bust' ? 'bust' : (isTurn ? 'live' : ''),
@@ -537,12 +645,12 @@ function renderBlackjack(round) {
         ].filter(Boolean).join(' ');
         return `
             <div class="seat you ${isTurn ? 'turn' : ''}">
-                <div class="card-row">${cardsHTML(h.cards, anim ? newCards : 0)}</div>
+                <div class="card-row">${cardsHTML(h.cards, handSeqs[i])}</div>
                 <div class="seat-head">
                     <span class="seat-name">${label}${isTurn ? ' — your move' : ''}</span>
                     <span class="${totalCls}" data-total>${h.total}</span>
                 </div>
-                ${h.result ? `<div class="seat-verdict ${h.result}">${blackjackVerdict(h)}</div>` : ''}
+                <div class="seat-verdict ${h.result || ''}">${h.result ? blackjackVerdict(h) : ''}</div>
             </div>`;
     }).join('');
 
@@ -552,27 +660,23 @@ function renderBlackjack(round) {
                 <span class="seat-name">Dealer</span>
                 <span class="seat-total ${dealerBust ? 'bust' : ''}" data-total>${dealerTotal}</span>
             </div>
-            <div class="card-row">${cardsHTML(round.dealer, anim ? dealerNew : 0)}</div>
+            <div class="card-row">${cardsHTML(round.dealer, dealerSeq, holeFlip)}</div>
+            <div class="seat-verdict">${!live && allBust(round)
+                ? 'All hands busted — the dealer stood' : ''}</div>
         </div>
-        ${seats}
-        ${!live && allBust(round)
-            ? '<div class="table-note">Every hand busted, so the dealer had nothing left to beat and stood.</div>'
-            : ''}`;
+        ${seats}`;
 
     // Remember what is on the felt so the next paint knows what is new.
     lastBlackjackCounts = {
         dealer: round.dealer.length,
         hands: round.hands.map(h => h.cards.length),
+        dealerHidden: round.dealer.includes('??'),
     };
 
-    playDealSounds(dealerNew + round.hands.reduce(
-        (n, h, i) => n + Math.max(0, h.cards.length - (prev.hands[i] || 0)), 0));
+    if (holeFlip >= 0) SFX.flip();
+    playDealSounds(dealtCount);
 
-    renderActions(round.actions.map(a => ({
-        action: a,
-        label: { hit: 'Hit', stand: 'Stand', double: 'Double', split: 'Split' }[a] || a,
-        gold: a === 'hit',
-    })));
+    renderActions(round.actions);
 }
 
 // One papery skim per new card, spaced to match the visual stagger.
@@ -580,6 +684,15 @@ function playDealSounds(count) {
     if (!count) return;
     const gap = motionOn() ? 0.19 : 0.06;
     for (let i = 0; i < Math.min(count, 8); i++) SFX.deal(i * gap);
+}
+
+// Beads land far too fast to click one-for-one, so play a sparse run of chips
+// across the same window and finish on the remainder.
+function playBeadSounds(count) {
+    const window = 0.9;
+    const ticks = Math.min(10, count);
+    for (let i = 0; i < ticks; i++) SFX.chip((i / ticks) * window);
+    SFX.flip(window + 0.05);
 }
 
 function allBust(round) {
@@ -605,12 +718,12 @@ function renderMississippi(round) {
     stage.innerHTML = `
         <div class="hand-block">
             <div class="hand-label">Your two</div>
-            <div class="card-row">${cardsHTML(round.hole, anim ? holeNew : 0)}</div>
+            <div class="card-row">${cardsHTML(round.hole, seqTail(round.hole, holeNew, 0, anim))}</div>
         </div>
         <div class="hand-block">
             <div class="hand-label">The board${round.label ? `<span class="hand-total">${round.label}</span>` : ''}</div>
             <div class="card-row">
-                ${cardsHTML(round.community, anim ? communityNew : 0)}
+                ${cardsHTML(round.community, seqTail(round.community, communityNew, holeNew, anim))}
                 ${'<div class="card-slot"></div>'.repeat(Math.max(0, slots))}
             </div>
         </div>
@@ -626,23 +739,197 @@ function renderMississippi(round) {
             : (round.stage === 'folded' ? 'Folded. The rest of the board is shown so you can still check the deal.'
                                         : round.label)}</div>`;
 
-    if (live) {
-        renderActions([
-            { action: 'raise', multiple: 1, label: '1× raise' },
-            { action: 'raise', multiple: 2, label: '2× raise' },
-            { action: 'raise', multiple: 3, label: '3× raise', gold: true },
-            { action: 'fold', label: 'Fold' },
-        ]);
-    } else {
-        renderActions([]);
-    }
+    renderActions(live ? ['raise', 'fold'] : []);
 }
 
-function renderActions(actions) {
+// Every game gets a fixed grid of action slots. Buttons are enabled and
+// disabled in place and never added or removed, so a button never moves out
+// from under the pointer — put the mouse on Hit and it stays Hit.
+const ACTION_SLOTS = {
+    blackjack: [
+        { action: 'hit',    label: 'Hit',    key: 'H', gold: true },
+        { action: 'stand',  label: 'Stand',  key: 'S' },
+        { action: 'double', label: 'Double', key: 'D' },
+        { action: 'split',  label: 'Split',  key: 'P' },
+    ],
+    mississippi: [
+        { action: 'raise', multiple: 1, label: '1× raise', key: '1' },
+        { action: 'raise', multiple: 2, label: '2× raise', key: '2' },
+        { action: 'raise', multiple: 3, label: '3× raise', key: '3', gold: true },
+        { action: 'fold',  label: 'Fold', key: 'F' },
+    ],
+};
+
+// `available` is the list of action names the server says are legal right now.
+function renderActions(available) {
     const el = document.getElementById('table-actions');
-    el.innerHTML = actions.map(a => `
-        <button class="btn ${a.gold ? 'btn-gold' : 'btn-secondary'}"
-                onclick="tableAct('${a.action}', ${a.multiple || 0})">${a.label}</button>`).join('');
+    const slots = ACTION_SLOTS[currentTable && currentTable.key] || [];
+    if (!slots.length) { el.innerHTML = ''; return; }
+
+    const legal = new Set(available || []);
+    el.innerHTML = slots.map(s => {
+        const on = legal.has(s.action);
+        return `
+        <button class="btn ${s.gold ? 'btn-gold' : 'btn-secondary'}"
+                data-action="${s.action}" data-multiple="${s.multiple || 0}"
+                ${on ? '' : 'disabled'}
+                onclick="tableAct('${s.action}', ${s.multiple || 0})">
+            ${s.label}<span class="btn-key">${s.key}</span>
+        </button>`;
+    }).join('');
+}
+
+// The keyboard equivalent of the same grid.
+function tableHotkey(e) {
+    if (activeView !== 'tables-play-view') return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    const key = e.key.toUpperCase();
+
+    // Space or Enter deals, when dealing is what's on offer.
+    if (e.key === ' ' || e.key === 'Enter') {
+        const deal = document.getElementById('table-deal-btn');
+        if (deal && !deal.disabled) { e.preventDefault(); deal.click(); }
+        return;
+    }
+
+    const slots = ACTION_SLOTS[currentTable && currentTable.key] || [];
+    const slot = slots.find(s => s.key === key);
+    if (!slot) return;
+    const btn = document.querySelector(
+        `#table-actions .btn[data-action="${slot.action}"][data-multiple="${slot.multiple || 0}"]`);
+    if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+}
+
+document.addEventListener('keydown', tableHotkey);
+
+// ===== Auto mode =====
+// Plays the same hit-soft-17 basic strategy that scripts/bj_basic_strategy.py
+// uses to measure the house edge, so what you watch here is the 0.64% line —
+// not a guess. It only ever presses the buttons you could press yourself.
+// Blackjack plays basic strategy. Baccarat and fan-tan involve no decisions at
+// all once the bet is placed, so auto simply keeps dealing the bet you chose.
+// Mississippi Stud is deliberately absent: playing it well needs a strategy
+// chart, and the rough one used for the edge simulation gives away about three
+// points of edge — not something to run unattended on someone's balance.
+const AUTO_GAMES = new Set(['blackjack', 'baccarat', 'fan_tan']);
+
+let autoPlay = false;
+let autoTimer = null;
+
+function upcardValue(card) {
+    const r = card.slice(0, -1);
+    if (r === 'A') return 11;
+    return ['K', 'Q', 'J', '10'].includes(r) ? 10 : parseInt(r, 10);
+}
+
+function pairRank(card) {
+    const r = card.slice(0, -1);
+    if (r === 'A') return 'A';
+    return ['K', 'Q', 'J', '10'].includes(r) ? '10' : r;
+}
+
+function basicStrategy(hand, up, legal) {
+    const cards = hand.cards;
+    const total = hand.total;
+    const soft = hand.soft;
+    const canDouble = legal.includes('double');
+    const canSplit = legal.includes('split');
+
+    if (canSplit) {
+        const p = pairRank(cards[0]);
+        if (p === 'A' || p === '8') return 'split';
+        if (p === '9') return [2, 3, 4, 5, 6, 8, 9].includes(up) ? 'split' : 'stand';
+        if (p === '10') return 'stand';
+        if (p === '7') return up <= 7 ? 'split' : 'hit';
+        if (p === '6') return up <= 6 ? 'split' : 'hit';
+        if (p === '4') return [5, 6].includes(up) ? 'split' : 'hit';
+        if (p === '2' || p === '3') return up <= 7 ? 'split' : 'hit';
+        // A pair of fives is never split — it plays as a hard ten.
+    }
+
+    if (soft) {
+        const kicker = total - 11;
+        if (kicker >= 9) return 'stand';
+        if (kicker === 8) return (canDouble && up === 6) ? 'double' : 'stand';   // H17
+        if (kicker === 7) {
+            if (canDouble && up >= 2 && up <= 6) return 'double';                // H17
+            return [7, 8].includes(up) ? 'stand' : 'hit';
+        }
+        if (kicker === 6) return (canDouble && up >= 3 && up <= 6) ? 'double' : 'hit';
+        if (kicker === 4 || kicker === 5) return (canDouble && up >= 4 && up <= 6) ? 'double' : 'hit';
+        if (kicker === 2 || kicker === 3) return (canDouble && up >= 5 && up <= 6) ? 'double' : 'hit';
+        return 'hit';
+    }
+
+    if (total >= 17) return 'stand';
+    if (total >= 13) return up <= 6 ? 'stand' : 'hit';
+    if (total === 12) return (up >= 4 && up <= 6) ? 'stand' : 'hit';
+    if (total === 11) return canDouble ? 'double' : 'hit';                       // H17
+    if (total === 10) return (canDouble && up <= 9) ? 'double' : 'hit';
+    if (total === 9) return (canDouble && up >= 3 && up <= 6) ? 'double' : 'hit';
+    return 'hit';
+}
+
+function toggleAuto() {
+    autoPlay = !autoPlay;
+    const btn = document.getElementById('pref-auto');
+    if (btn) btn.classList.toggle('on', autoPlay);
+    const label = document.getElementById('pref-auto-label');
+    if (label) label.textContent = autoPlay ? 'Auto on' : 'Auto';
+    SFX.button();
+    if (autoPlay) scheduleAuto(400);
+    else if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+}
+
+function stopAuto(reason) {
+    if (!autoPlay) return;
+    autoPlay = false;
+    const btn = document.getElementById('pref-auto');
+    if (btn) btn.classList.remove('on');
+    const label = document.getElementById('pref-auto-label');
+    if (label) label.textContent = 'Auto';
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    if (reason) showTableResult(reason, 'lose');
+}
+
+function scheduleAuto(delay) {
+    if (autoTimer) clearTimeout(autoTimer);
+    autoTimer = setTimeout(autoStep, delay);
+}
+
+function autoStep() {
+    autoTimer = null;
+    if (!autoPlay) return;
+    // Anything that takes us off the table stops it.
+    if (activeView !== 'tables-play-view' || !currentTable || !AUTO_GAMES.has(currentTable.key)) {
+        return stopAuto(null);
+    }
+    if (tableBusy) return scheduleAuto(220);
+
+    if (activeRound && activeRound.status === 'active' && currentTable.key === 'blackjack') {
+        const legal = activeRound.actions || [];
+        if (!legal.length) return scheduleAuto(260);
+        const hand = activeRound.hands[activeRound.active];
+        const up = upcardValue(activeRound.dealer[0]);
+        let move = basicStrategy(hand, up, legal);
+        if (!legal.includes(move)) move = legal.includes('hit') ? 'hit' : 'stand';
+        tableAct(move, 0);
+        return scheduleAuto(motionOn() ? 1100 : 500);
+    }
+
+    // Between hands: deal the next one, if it can still be afforded.
+    if (tableBalance < tableBet) {
+        return stopAuto('Auto stopped — not enough points for another hand');
+    }
+    const dealBtn = document.getElementById('table-deal-btn');
+    if (dealBtn && dealBtn.disabled) return scheduleAuto(300);
+    dealTable();
+    // Fan-tan spends about a second pouring the pile out before it means anything.
+    const settle = currentTable.key === 'fan_tan' ? 2200 : 1600;
+    scheduleAuto(motionOn() ? settle : 700);
 }
 
 async function tableAct(action, multiple) {
