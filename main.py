@@ -333,6 +333,10 @@ def get_db():
 
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "12"))
 
+# A hard ceiling on the roster. This is a private table for a few friends, not a
+# sign-up product — 0 means no limit, for a setup that wants one.
+MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "3"))
+
 # Scanning is the only unauthenticated way in, so it is the only thing worth
 # brute-forcing. Wrong guesses are counted per source address.
 _scan_failures = {}
@@ -837,6 +841,14 @@ def register_player(request: RegisterRequest, db: Session_ = Depends(get_db), _:
     existing = db.query(Player).filter(Player.card_id == request.card_id).first()
     if existing:
         raise HTTPException(status_code=400, detail="Card already registered")
+
+    if MAX_PLAYERS:
+        count = db.query(Player).count()
+        if count >= MAX_PLAYERS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The house is full — {MAX_PLAYERS} seats, all taken. "
+                       f"Remove a player or raise MAX_PLAYERS.")
 
     player = Player(card_id=request.card_id, name=request.name)
     db.add(player)

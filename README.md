@@ -298,6 +298,11 @@ itself. A client that reported its own multiplier would simply claim the bust
 point every round. A round you walk away from settles itself — the rocket had
 already gone, and leaving it open would hold your stake.
 
+## Deploying somewhere public
+
+See **[DEPLOY.md](DEPLOY.md)** — Cloud Run, the fixed three-player roster,
+why card IDs are random, and what a persistent database costs.
+
 ## Production Deployment
 
 ### Option 1: Docker Compose (Recommended)
