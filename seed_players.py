@@ -10,14 +10,18 @@ or change a card that already exists. Safe to run on every container boot.
 
 WHY THE CARD IDS LOOK LIKE THAT
 -------------------------------
-The card ID is the password. On a public URL, "david" or "alex" would be a
-password anyone could guess on the first try, and there is no second factor
-behind it. So each player gets a random one unless you set it yourself:
+The card ID is the password, and there is no second factor behind it. So by
+default each player gets a random 16-hex-character one, shaped like an RFID UID
+but not guessable.
 
-    SEED_CARD_DAVID=04A2B3C4D5E6F7   # the real UID off your RFID card
+Override it when you want something else:
 
-Set those to the actual UIDs your reader emits and the physical cards work.
-Leave them unset and you get random ones to hand out by hand.
+    SEED_CARD_DAVID=04a2b3c4d5e6f7    # the real UID off your RFID card
+    SEED_CARD_DAVID=david             # memorable, and trivially guessable
+
+The second form is fine for a throwaway test with play money. It is not fine
+once anything matters, because "david" is a password of "david". Lookups ignore
+case either way.
 """
 import os
 import secrets
@@ -28,7 +32,7 @@ os.environ.setdefault("SEEDING", "1")
 import main  # noqa: E402  (importing creates the tables)
 
 # Names only. The card ID -- the credential -- is random unless supplied.
-ROSTER = ["David", "Alex", "Guest"]
+ROSTER = ["David", "Alex", "Max"]
 START_POINTS = float(os.getenv("SEED_START_POINTS", "10000"))
 
 
