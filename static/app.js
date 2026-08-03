@@ -14,11 +14,38 @@ let adminPin = null;
 // funds, your standing — knows who you are. Persisted so a refresh or a phone
 // locking its screen doesn't put you back at the door.
 const SESSION_KEY = 'davidsino.card';
+const TOKEN_KEY = 'davidsino.token';
 let currentPlayer = null;
 let activeView = 'menu-view';
+let authToken = null;
 
-function setSession(player, cardId) {
+// One place that knows how to talk to the server as *you*. Every call that
+// moves points or reads your ledger goes through here, so the token is attached
+// once rather than remembered at 30 call sites.
+function authHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+    return h;
+}
+
+async function api(path, options) {
+    const opts = Object.assign({}, options || {});
+    opts.headers = authHeaders(opts.headers);
+    const resp = await fetch(`${API_BASE}${path}`, opts);
+    if (resp.status === 401) {
+        // The card is no longer logged in — stop pretending it is.
+        clearSession();
+        showView('scan-view');
+    }
+    return resp;
+}
+
+function setSession(player, cardId, token) {
     currentPlayer = player;
+    if (token) {
+        authToken = token;
+        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* private mode */ }
+    }
     currentCardId = cardId || (player && player.card_id) || currentCardId;
     currentPlayerId = player ? player.id : null;
     try { localStorage.setItem(SESSION_KEY, currentCardId); } catch (e) { /* private mode */ }
@@ -27,10 +54,20 @@ function setSession(player, cardId) {
 }
 
 function clearSession() {
+    // Drop it server-side too, so a copied token dies with the sign-out.
+    if (authToken) {
+        fetch(`${API_BASE}/api/auth/logout`, {
+            method: 'POST', headers: authHeaders(),
+        }).catch(() => {});
+    }
     currentPlayer = null;
     currentCardId = null;
     currentPlayerId = null;
-    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* private mode */ }
+    authToken = null;
+    try {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+    } catch (e) { /* private mode */ }
     setHeaderPlayer(null);
     syncCardInputs();
     closeIdentityMenu();
@@ -47,7 +84,7 @@ async function refreshSession() {
         });
         const data = await resp.json();
         if (data.registered) {
-            setSession(data.player, currentCardId);
+            setSession(data.player, currentCardId, data.token);
             return data.player;
         }
         // Card was deleted out from under us.
@@ -60,8 +97,16 @@ async function refreshSession() {
 
 async function restoreSession() {
     let saved = null;
-    try { saved = localStorage.getItem(SESSION_KEY); } catch (e) { /* private mode */ }
-    if (!saved) { setHeaderPlayer(null); return; }
+    try {
+        saved = localStorage.getItem(SESSION_KEY);
+        authToken = localStorage.getItem(TOKEN_KEY);
+    } catch (e) { /* private mode */ }
+    if (!saved || !authToken) {
+        // A card without a live token is not logged in.
+        authToken = null;
+        setHeaderPlayer(null);
+        return;
+    }
     currentCardId = saved;
     await refreshSession();
 }
@@ -127,7 +172,7 @@ async function submitIdentity() {
         const data = await resp.json();
         if (!data.registered) return fail('Not on file — see the dealer');
 
-        setSession(data.player, cardId);
+        setSession(data.player, cardId, data.token);
         closeIdentityMenu();
         // Refresh whatever view is open so it picks up the new player.
         rehydrateActiveView();
@@ -370,7 +415,7 @@ async function processScan(cardId) {
             statusEl.textContent = 'Found it';
             statusEl.className = 'scan-status found';
 
-            setSession(data.player, cardId);
+            setSession(data.player, cardId, data.token);
             document.getElementById('result-name').textContent = data.player.name;
             document.getElementById('result-points').textContent = data.player.reward_points.toFixed(0);
             document.getElementById('result-cashin').textContent = '$' + data.player.total_cash_in.toFixed(2);
@@ -405,7 +450,7 @@ async function showSummary() {
     showView('summary-view');
 
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/summary`);
+        const resp = await api(`/api/players/${currentPlayerId}/summary`);
         const data = await resp.json();
 
         document.getElementById('summary-name').textContent = data.player.name;
@@ -422,7 +467,7 @@ async function showSummary() {
         } else {
             // Generate roast
             try {
-                const roastResp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/roast`, { method: 'POST' });
+                const roastResp = await api(`/api/players/${currentPlayerId}/roast`, { method: 'POST' });
                 const roastData = await roastResp.json();
                 document.getElementById('roast-text').textContent = roastData.roast;
                 document.getElementById('summary-roast').classList.remove('hidden');
@@ -450,7 +495,7 @@ function showSummaryTab(tab) {
 
 async function loadHistory() {
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/history?limit=50`);
+        const resp = await api(`/api/players/${currentPlayerId}/history?limit=50`);
         const data = await resp.json();
 
         const tbody = document.getElementById('history-body');
@@ -483,7 +528,7 @@ async function loadHistory() {
 
 async function loadDailyPnl() {
     try {
-        const resp = await fetch(`${API_BASE}/api/players/${currentPlayerId}/daily-pnl`);
+        const resp = await api(`/api/players/${currentPlayerId}/daily-pnl`);
         const data = await resp.json();
 
         const chartEl = document.getElementById('daily-chart');
@@ -900,7 +945,9 @@ async function searchPlayers() {
     resultsEl.innerHTML = '<div class="empty">Searching...</div>';
     
     try {
-        const resp = await fetch(`${API_BASE}/api/players/search?query=${encodeURIComponent(query)}`);
+        // Dealer lookup: PIN-gated, because the results contain card IDs.
+        const resp = await api(`/api/players/search?query=${encodeURIComponent(query)}`,
+                               { headers: { 'X-Admin-Pin': adminPin || '' } });
         const data = await resp.json();
         
         if (data.count === 0) {

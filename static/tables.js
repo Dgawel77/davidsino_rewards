@@ -94,7 +94,7 @@ async function loadTablePlayer(cardId) {
         });
         const data = await resp.json();
         if (!data.registered) return false;
-        setSession(data.player, cardId);
+        setSession(data.player, cardId, data.token);
         tableBalance = data.player.reward_points;
         checkForOpenHand();
         return true;
@@ -108,7 +108,7 @@ async function checkForOpenHand() {
     const box = document.getElementById('tables-resume');
     if (!currentCardId) { box.classList.add('hidden'); return; }
     try {
-        const resp = await fetch(`${API_BASE}/api/tables/active?card_id=${encodeURIComponent(currentCardId)}`);
+        const resp = await api(`/api/tables/active?card_id=${encodeURIComponent(currentCardId)}`);
         const data = await resp.json();
         if (!data.active) {
             // Clear any stale round we were still holding, or a later guard
@@ -485,7 +485,7 @@ async function dealTable() {
     if (currentTable.key === 'crash' && crashTarget) body.target = crashTarget;
 
     try {
-        const resp = await fetch(`${API_BASE}/api/tables/deal`, {
+        const resp = await api(`/api/tables/deal`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -1008,7 +1008,7 @@ async function tableAct(action, multiple, tile) {
     document.querySelectorAll('#table-actions .btn').forEach(b => b.disabled = true);
 
     try {
-        const resp = await fetch(`${API_BASE}/api/tables/action`, {
+        const resp = await api(`/api/tables/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

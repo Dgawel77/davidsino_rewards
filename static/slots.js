@@ -61,7 +61,7 @@ async function loadSlotPlayer(cardId) {
             document.getElementById('slots-player-name').textContent = data.player.name;
             document.getElementById('slots-player-points').textContent = Math.floor(slotBalance).toLocaleString();
             banner.classList.remove('hidden');
-            setSession(data.player, cardId);
+            setSession(data.player, cardId, data.token);
             return true;
         }
         banner.classList.add('hidden');
@@ -182,7 +182,7 @@ async function doSpin() {
     const shuffle = startShuffle();
 
     try {
-        const resp = await fetch(`${API_BASE}/api/slots/spin`, {
+        const resp = await api(`/api/slots/spin`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ card_id: slotCardId, machine: currentMachine.key, bet: currentBet })
@@ -301,7 +301,7 @@ function togglePaytable() {
 // ===== Provable fairness =====
 async function loadSeedInfo() {
     try {
-        const resp = await fetch(`${API_BASE}/api/slots/seed?card_id=${encodeURIComponent(slotCardId)}`);
+        const resp = await api(`/api/slots/seed?card_id=${encodeURIComponent(slotCardId)}`);
         const data = await resp.json();
         if (!resp.ok) return;
         document.getElementById('seed-hash').textContent = data.seed.server_seed_hash;
@@ -321,7 +321,7 @@ async function rotateSeed() {
     if (!confirm('Rotate seeds? This reveals the current server seed so you can verify every spin you just made.')) return;
 
     try {
-        const resp = await fetch(`${API_BASE}/api/slots/seed/rotate`, {
+        const resp = await api(`/api/slots/seed/rotate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ card_id: slotCardId, client_seed: custom || null })

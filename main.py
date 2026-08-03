@@ -4,16 +4,17 @@ Tracks player points, deposits, PNL, and event history for the casino loyalty pr
 """
 import copy
 import os
+import secrets
 import json
 from datetime import datetime, timezone, timedelta, date
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Depends, Query, Header
+from fastapi import FastAPI, HTTPException, Depends, Query, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Numeric, Boolean, JSON, func, desc, asc
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy.orm import sessionmaker, declarative_base, Session as Session_
 from sqlalchemy.dialects.postgresql import JSONB
 from pydantic import BaseModel
 from typing import Optional, List
@@ -134,6 +135,25 @@ class PendingDeposit(Base):
     instructions_json = Column(JSONType, default=dict)  # snapshot: address/amount/rate shown to the player
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     resolved_at = Column(DateTime, nullable=True)
+
+class Session(Base):
+    """
+    A logged-in card.
+
+    The card ID is the credential, so it must not be the thing sent on every
+    request — one shoulder-surf of a URL would be enough. Scanning exchanges it
+    once for a random token with an expiry, and everything after that presents
+    the token.
+    """
+    __tablename__ = "sessions"
+
+    token = Column(String(64), primary_key=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
 
 class TableRound(Base):
     """
@@ -310,6 +330,91 @@ def get_db():
     finally:
         db.close()
 
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "12"))
+
+# Scanning is the only unauthenticated way in, so it is the only thing worth
+# brute-forcing. Wrong guesses are counted per source address.
+_scan_failures = {}
+SCAN_MAX_FAILURES = int(os.getenv("SCAN_MAX_FAILURES", "10"))
+SCAN_LOCKOUT_MINUTES = int(os.getenv("SCAN_LOCKOUT_MINUTES", "5"))
+
+
+def _client_ip(request) -> str:
+    return (request.client.host if request and request.client else "unknown")
+
+
+def _scan_locked(ip: str) -> bool:
+    entry = _scan_failures.get(ip)
+    if not entry:
+        return False
+    count, until = entry
+    if datetime.now(timezone.utc) >= until:
+        _scan_failures.pop(ip, None)
+        return False
+    return count >= SCAN_MAX_FAILURES
+
+
+def _note_scan_failure(ip: str) -> None:
+    count, until = _scan_failures.get(ip, (0, datetime.now(timezone.utc)))
+    if datetime.now(timezone.utc) >= until:
+        count = 0
+    _scan_failures[ip] = (count + 1,
+                          datetime.now(timezone.utc) + timedelta(minutes=SCAN_LOCKOUT_MINUTES))
+
+
+def _clear_scan_failures(ip: str) -> None:
+    _scan_failures.pop(ip, None)
+
+
+def _issue_session(db: Session_, player: Player) -> "Session":
+    token = secrets.token_urlsafe(32)
+    sess = Session(
+        token=token,
+        player_id=player.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS),
+    )
+    db.add(sess)
+    return sess
+
+
+def current_player(authorization: str = Header(None),
+                   db: Session_ = Depends(get_db)) -> Player:
+    """
+    Resolve the caller from their session token.
+
+    Every endpoint that moves points or shows a player's private ledger depends
+    on this, so a card ID alone is never enough to act as somebody.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Scan your card to play")
+    token = authorization.split(" ", 1)[1].strip()
+
+    sess = db.query(Session).filter(Session.token == token).first()
+    if not sess:
+        raise HTTPException(status_code=401, detail="Scan your card to play")
+
+    expires = sess.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) >= expires:
+        db.delete(sess)
+        db.commit()
+        raise HTTPException(status_code=401, detail="Session expired — scan again")
+
+    player = db.query(Player).filter(Player.id == sess.player_id).first()
+    if not player:
+        raise HTTPException(status_code=401, detail="That card is no longer on file")
+
+    sess.last_seen = datetime.now(timezone.utc)
+    return player
+
+
+def require_self(player: Player, card_id: str) -> None:
+    """A request may only ever act on the card it was issued for."""
+    if card_id and card_id != player.card_id:
+        raise HTTPException(status_code=403, detail="That is not your card")
+
+
 def require_admin(x_admin_pin: str = Header(None)):
     """
     Gate for endpoints that move money.
@@ -327,7 +432,7 @@ def get_pnl(player: Player) -> float:
     """PNL = cash_out - cash_in (positive = player ahead, negative = player down)"""
     return player.total_cash_out - player.total_cash_in
 
-def record_event(db: Session, player_id: int, event_type: str, cash_amount: float = 0,
+def record_event(db: Session_, player_id: int, event_type: str, cash_amount: float = 0,
                  points_delta: float = 0, pnl_impact: float = 0, metadata: dict = None,
                  description: str = ""):
     """Record a player event in the event log."""
@@ -374,15 +479,36 @@ def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.post("/api/scan")
-def scan_card(request: ScanRequest, db: Session = Depends(get_db)):
-    """Scan a card and return player info"""
+def scan_card(request: ScanRequest, http_request: Request, db: Session_ = Depends(get_db)):
+    """
+    The only door into the app: present a registered card, get a session token.
+
+    An unregistered card is a failed attempt, counted per address — this is the
+    one unauthenticated endpoint, so it is the only one worth guessing at.
+    """
+    ip = _client_ip(http_request)
+    if _scan_locked(ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many bad cards. Wait {SCAN_LOCKOUT_MINUTES} minutes or see the dealer.")
+
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
+        _note_scan_failure(ip)
         return {"registered": False, "card_id": request.card_id}
+
+    _clear_scan_failures(ip)
+    # Sweep this player's expired sessions while we are here.
+    db.query(Session).filter(Session.player_id == player.id,
+                             Session.expires_at < datetime.now(timezone.utc)).delete()
+    sess = _issue_session(db, player)
+    db.commit()
 
     pnl = get_pnl(player)
     return {
         "registered": True,
+        "token": sess.token,
+        "expires_at": sess.expires_at.isoformat(),
         "player": {
             "id": player.id,
             "card_id": player.card_id,
@@ -394,9 +520,26 @@ def scan_card(request: ScanRequest, db: Session = Depends(get_db)):
         }
     }
 
+@app.post("/api/auth/logout")
+def logout(authorization: str = Header(None), db: Session_ = Depends(get_db)):
+    """Drop the session server-side, so a stolen token dies with the sign-out."""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        db.query(Session).filter(Session.token == token).delete()
+        db.commit()
+    return {"ok": True}
+
+
 @app.get("/api/players/search")
-def search_players(query: str = Query(..., min_length=1), db: Session = Depends(get_db)):
-    """Search players by name or card_id (partial match)"""
+def search_players(query: str = Query(..., min_length=1), db: Session_ = Depends(get_db),
+                   _: None = Depends(require_admin)):
+    """
+    Dealer lookup by name or card ID.
+
+    PIN-gated because it returns card IDs, and a card ID is now the credential
+    that logs somebody in — open, this endpoint handed out every player's login
+    to anyone who could reach the box.
+    """
     search_term = f"%{query.lower()}%"
     players = db.query(Player).filter(
         (Player.name.ilike(search_term)) | (Player.card_id.ilike(search_term))
@@ -420,10 +563,13 @@ def search_players(query: str = Query(..., min_length=1), db: Session = Depends(
 # Routes - History & Analytics
 # ============================================================
 @app.get("/api/players/{player_id}/history")
-def get_player_history(player_id: int, db: Session = Depends(get_db),
+def get_player_history(player_id: int, db: Session_ = Depends(get_db),
                        limit: int = Query(100, ge=1, le=500),
-                       offset: int = Query(0, ge=0)):
+                       offset: int = Query(0, ge=0),
+                   me: Player = Depends(current_player)):
     """Get paginated event history for a player"""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     events = db.query(PlayerEvent).filter(
         PlayerEvent.player_id == player_id
     ).order_by(PlayerEvent.created_at.desc()).offset(offset).limit(limit).all()
@@ -448,8 +594,11 @@ def get_player_history(player_id: int, db: Session = Depends(get_db),
     }
 
 @app.get("/api/players/{player_id}/daily-pnl")
-def get_daily_pnl(player_id: int, db: Session = Depends(get_db)):
+def get_daily_pnl(player_id: int, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Get daily PNL summary with running total for a player"""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     # Group events by date and sum pnl_impact
     daily = db.query(
         func.date(PlayerEvent.created_at).label("day"),
@@ -475,8 +624,11 @@ def get_daily_pnl(player_id: int, db: Session = Depends(get_db)):
     return {"daily_pnl": result}
 
 @app.get("/api/players/{player_id}/summary")
-def get_player_summary(player_id: int, db: Session = Depends(get_db)):
+def get_player_summary(player_id: int, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Get full account summary including roast"""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     player = db.query(Player).filter(Player.id == player_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -587,8 +739,11 @@ def _generate_roast_text(player: Player, pnl: float, recent_events: list) -> str
 
 
 @app.post("/api/players/{player_id}/roast")
-def generate_roast(player_id: int, db: Session = Depends(get_db)):
+def generate_roast(player_id: int, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Generate and cache a new AI roast for a player"""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     player = db.query(Player).filter(Player.id == player_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -626,7 +781,7 @@ def generate_roast(player_id: int, db: Session = Depends(get_db)):
     return {"roast": roast_text}
 
 @app.get("/api/leaderboard")
-def get_leaderboard(db: Session = Depends(get_db),
+def get_leaderboard(db: Session_ = Depends(get_db),
                     sort_by: str = Query("pnl", pattern="(pnl|points|cash_in)$")):
     """Get leaderboard ranked by PNL, reward points, or cash in"""
     players = db.query(Player).all()
@@ -639,7 +794,8 @@ def get_leaderboard(db: Session = Depends(get_db),
         result.append({
             "id": p.id,
             "name": p.name,
-            "card_id": p.card_id,
+            # Deliberately no card_id: the board is public to everyone in the
+            # room, and a card ID is what logs you in.
             "reward_points": p.reward_points,
             "total_cash_in": p.total_cash_in,
             "total_cash_out": p.total_cash_out,
@@ -675,7 +831,7 @@ def admin_auth(request: AdminAuth):
 # Routes - Admin
 # ============================================================
 @app.post("/api/admin/register")
-def register_player(request: RegisterRequest, db: Session = Depends(get_db)):
+def register_player(request: RegisterRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Register a new player"""
     existing = db.query(Player).filter(Player.card_id == request.card_id).first()
     if existing:
@@ -692,7 +848,7 @@ def register_player(request: RegisterRequest, db: Session = Depends(get_db)):
     return {"message": "Player registered", "player_id": player.id}
 
 @app.post("/api/admin/deposit")
-def record_deposit(request: DepositRequest, db: Session = Depends(get_db)):
+def record_deposit(request: DepositRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Record a cash deposit"""
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
@@ -733,7 +889,7 @@ def record_deposit(request: DepositRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/admin/cashout")
-def record_cashout(request: LossRequest, db: Session = Depends(get_db)):
+def record_cashout(request: LossRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Record a cash-out"""
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
@@ -764,7 +920,7 @@ def record_cashout(request: LossRequest, db: Session = Depends(get_db)):
     return {"message": "Cash out recorded", "pnl": pnl, "player": player.name}
 
 @app.post("/api/admin/add_points")
-def add_reward_points(request: AdjustmentRequest, db: Session = Depends(get_db)):
+def add_reward_points(request: AdjustmentRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Manually add reward points"""
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
@@ -793,7 +949,7 @@ def add_reward_points(request: AdjustmentRequest, db: Session = Depends(get_db))
     return {"message": "Points added", "reward_points": player.reward_points, "player": player.name}
 
 @app.post("/api/admin/redeem_points")
-def redeem_points(request: AdjustmentRequest, db: Session = Depends(get_db)):
+def redeem_points(request: AdjustmentRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Redeem reward points"""
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
@@ -839,8 +995,10 @@ def payment_methods():
             "max_deposit": MAX_DEPOSIT_USD}
 
 @app.post("/api/payments/deposit-request")
-def create_deposit_request(request: DepositRequestCreate, db: Session = Depends(get_db)):
+def create_deposit_request(request: DepositRequestCreate, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Create a pending deposit and return everything needed to send the money."""
+    require_self(me, request.card_id)
     method = payments_lib.get_method(request.method)
     if not method:
         raise HTTPException(status_code=400, detail="Payment method not available")
@@ -854,6 +1012,8 @@ def create_deposit_request(request: DepositRequestCreate, db: Session = Depends(
 
     amount = round(request.amount, 2)
     instructions = payments_lib.build_instructions(method, amount)
+    # Unguessable key for the QR image, which cannot send an auth header.
+    instructions["qr_key"] = secrets.token_urlsafe(16)
 
     req = PendingDeposit(
         player_id=player.id,
@@ -872,15 +1032,18 @@ def create_deposit_request(request: DepositRequestCreate, db: Session = Depends(
         "amount": amount,
         "points_on_confirm": amount * 100,
         "instructions": instructions,
-        "qr_url": f"/api/payments/request/{req.id}/qr",
+        "qr_url": f"/api/payments/request/{req.id}/qr?k={instructions['qr_key']}",
     }
 
 @app.get("/api/payments/request/{req_id}")
-def get_deposit_request(req_id: int, db: Session = Depends(get_db)):
+def get_deposit_request(req_id: int, db: Session_ = Depends(get_db),
+                        me: Player = Depends(current_player)):
     """Poll a request. Instructions come from the stored snapshot so the address
     and quoted rate never drift after the player has been shown them."""
     req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
-    if not req:
+    if not req or req.player_id != me.id:
+        # Request ids are sequential, so an ungated lookup would let anyone walk
+        # the list and read every deposit on the floor.
         raise HTTPException(status_code=404, detail="Request not found")
     return {
         "request_id": req.id,
@@ -894,10 +1057,11 @@ def get_deposit_request(req_id: int, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/payments/request/{req_id}/txid")
-def attach_txid(req_id: int, body: TxidRequest, db: Session = Depends(get_db)):
+def attach_txid(req_id: int, body: TxidRequest, db: Session_ = Depends(get_db),
+                me: Player = Depends(current_player)):
     """Player records the transaction hash so the dealer can verify on-chain."""
     req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
-    if not req:
+    if not req or req.player_id != me.id:
         raise HTTPException(status_code=404, detail="Request not found")
     if req.status != "pending":
         raise HTTPException(status_code=400, detail=f"Request already {req.status}")
@@ -912,10 +1076,19 @@ def attach_txid(req_id: int, body: TxidRequest, db: Session = Depends(get_db)):
             "request_id": req.id, "txid": txid}
 
 @app.get("/api/payments/request/{req_id}/qr")
-def deposit_request_qr(req_id: int, db: Session = Depends(get_db)):
-    """QR of the payment URI for this request (address + exact amount when known)."""
+def deposit_request_qr(req_id: int, k: str = Query(None), db: Session_ = Depends(get_db)):
+    """
+    QR of the payment URI for this request.
+
+    An <img src> cannot carry an Authorization header, so this one is gated by a
+    per-request key handed out with the instructions rather than by the session.
+    Sequential ids alone would let anyone render every deposit on the floor.
+    """
     req = db.query(PendingDeposit).filter(PendingDeposit.id == req_id).first()
     if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    expected = (req.instructions_json or {}).get("qr_key")
+    if not expected or k != expected:
         raise HTTPException(status_code=404, detail="Request not found")
 
     data = (req.instructions_json or {}).get("uri")
@@ -926,7 +1099,7 @@ def deposit_request_qr(req_id: int, db: Session = Depends(get_db)):
                     headers={"Cache-Control": "public, max-age=3600"})
 
 @app.get("/api/admin/pending-deposits")
-def list_pending_deposits(db: Session = Depends(get_db), _: bool = Depends(require_admin),
+def list_pending_deposits(db: Session_ = Depends(get_db), _: bool = Depends(require_admin),
                           status: str = Query("pending", pattern="^(pending|confirmed|cancelled|all)$")):
     """Deposit requests awaiting a dealer's confirmation."""
     q = (db.query(PendingDeposit, Player)
@@ -947,7 +1120,7 @@ def list_pending_deposits(db: Session = Depends(get_db), _: bool = Depends(requi
         "created_at": r.PendingDeposit.created_at.isoformat() if r.PendingDeposit.created_at else None,
     } for r in rows]}
 
-def _claim_pending(db: Session, req_id: int, new_status: str) -> PendingDeposit:
+def _claim_pending(db: Session_, req_id: int, new_status: str) -> PendingDeposit:
     """Lock the row and flip it out of `pending`, so a double-click can't credit twice."""
     req = (db.query(PendingDeposit)
              .filter(PendingDeposit.id == req_id)
@@ -962,7 +1135,7 @@ def _claim_pending(db: Session, req_id: int, new_status: str) -> PendingDeposit:
     return req
 
 @app.post("/api/admin/pending-deposits/{req_id}/confirm")
-def confirm_pending_deposit(req_id: int, db: Session = Depends(get_db),
+def confirm_pending_deposit(req_id: int, db: Session_ = Depends(get_db),
                             _: bool = Depends(require_admin)):
     """Dealer confirms the funds arrived — credits cash-in and reward points."""
     req = _claim_pending(db, req_id, "confirmed")
@@ -1001,7 +1174,7 @@ def confirm_pending_deposit(req_id: int, db: Session = Depends(get_db),
             "reward_earned": reward_earned}
 
 @app.post("/api/admin/pending-deposits/{req_id}/cancel")
-def cancel_pending_deposit(req_id: int, db: Session = Depends(get_db),
+def cancel_pending_deposit(req_id: int, db: Session_ = Depends(get_db),
                            _: bool = Depends(require_admin)):
     """Dealer rejects a request — nothing is credited."""
     req = _claim_pending(db, req_id, "cancelled")
@@ -1011,7 +1184,7 @@ def cancel_pending_deposit(req_id: int, db: Session = Depends(get_db),
 # ============================================================
 # Routes - Slots (provably fair; bets and wins are reward points, never cash)
 # ============================================================
-def _active_seed(db: Session, player_id: int, lock: bool = False) -> SlotSeed:
+def _active_seed(db: Session_, player_id: int, lock: bool = False) -> SlotSeed:
     """Fetch the player's active seed pair, creating one on first play."""
     q = db.query(SlotSeed).filter(SlotSeed.player_id == player_id, SlotSeed.active.is_(True))
     if lock:
@@ -1048,11 +1221,13 @@ def get_slot_machines():
     return {"machines": slots_engine.machine_list()}
 
 @app.get("/api/slots/seed")
-def get_slot_seed(card_id: str = Query(...), db: Session = Depends(get_db)):
+def get_slot_seed(card_id: str = Query(...), db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """
     The fairness commitment. `server_seed_hash` is published before any spin;
     the matching secret is only revealed when the seed is rotated.
     """
+    require_self(me, card_id)
     player = db.query(Player).filter(Player.card_id == card_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -1061,13 +1236,15 @@ def get_slot_seed(card_id: str = Query(...), db: Session = Depends(get_db)):
     return {"player": player.name, "seed": _seed_public(seed)}
 
 @app.post("/api/slots/seed/rotate")
-def rotate_slot_seed(request: SlotSeedRotateRequest, db: Session = Depends(get_db)):
+def rotate_slot_seed(request: SlotSeedRotateRequest, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """
     Reveal the current server seed and start a fresh one.
 
     Rotating is how a player audits the house: once the old seed is public,
     every spin made under it can be recomputed with /api/slots/verify.
     """
+    require_self(me, request.card_id)
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -1108,8 +1285,10 @@ def rotate_slot_seed(request: SlotSeedRotateRequest, db: Session = Depends(get_d
     }
 
 @app.post("/api/slots/spin")
-def slot_spin(request: SlotSpinRequest, db: Session = Depends(get_db)):
+def slot_spin(request: SlotSpinRequest, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """One provably fair spin, wagering reward points."""
+    require_self(me, request.card_id)
     player = db.query(Player).filter(Player.card_id == request.card_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -1178,9 +1357,12 @@ def verify_slot_spin(request: SlotVerifyRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/players/{player_id}/slot-history")
-def get_slot_history(player_id: int, db: Session = Depends(get_db),
-                     limit: int = Query(50, ge=1, le=200)):
+def get_slot_history(player_id: int, db: Session_ = Depends(get_db),
+                     limit: int = Query(50, ge=1, le=200),
+                   me: Player = Depends(current_player)):
     """Past spins with the seed context needed to audit each one."""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     events = (db.query(PlayerEvent)
                 .filter(PlayerEvent.player_id == player_id,
                         PlayerEvent.event_type == "slot_spin")
@@ -1229,7 +1411,7 @@ def _elapsed_seconds(state: dict) -> float:
     return max(0.0, (datetime.now(timezone.utc) - began).total_seconds())
 
 
-def _expire_stale_crash(db: Session, player: Player) -> None:
+def _expire_stale_crash(db: Session_, player: Player) -> None:
     """
     Settle any crash round whose rocket has already gone.
 
@@ -1251,7 +1433,7 @@ def _expire_stale_crash(db: Session, player: Player) -> None:
             _settle_round(db, player, rnd, arcade_engine.crash_expire(state))
 
 
-def _table_player(db: Session, card_id: str) -> Player:
+def _table_player(db: Session_, card_id: str) -> Player:
     player = db.query(Player).filter(Player.card_id == card_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -1296,7 +1478,7 @@ def _round_public(rnd: TableRound, state: dict) -> dict:
     }
 
 
-def _settle_round(db: Session, player: Player, rnd: TableRound, state: dict) -> None:
+def _settle_round(db: Session_, player: Player, rnd: TableRound, state: dict) -> None:
     """Credit the payout, close the round, and write one auditable event."""
     payout = round(float(state.get("payout", 0.0)), 2)
     extra_wagered = round(float(state["wagered"]), 2) - rnd.wagered
@@ -1345,11 +1527,13 @@ def get_table_games():
 
 
 @app.post("/api/tables/deal")
-def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
+def table_deal(request: TableDealRequest, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """
     Start a hand. Baccarat and fan-tan settle right here; blackjack and
     Mississippi Stud return a live round to act on.
     """
+    require_self(me, request.card_id)
     game = _game_def(request.game)
     player = _table_player(db, request.card_id)
 
@@ -1466,8 +1650,10 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/tables/action")
-def table_action(request: TableActionRequest, db: Session = Depends(get_db)):
+def table_action(request: TableActionRequest, db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Hit, stand, double, split — or in Mississippi Stud, raise or fold."""
+    require_self(me, request.card_id)
     player = _table_player(db, request.card_id)
 
     rnd = (db.query(TableRound)
@@ -1550,8 +1736,10 @@ def table_action(request: TableActionRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/tables/round/{round_id}")
-def get_table_round(round_id: int, card_id: str = Query(...), db: Session = Depends(get_db)):
+def get_table_round(round_id: int, card_id: str = Query(...), db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """Recover a hand that was interrupted — a closed tab, a dead phone."""
+    require_self(me, card_id)
     player = _table_player(db, card_id)
     rnd = db.query(TableRound).filter(TableRound.id == round_id).first()
     if not rnd or rnd.player_id != player.id:
@@ -1562,8 +1750,10 @@ def get_table_round(round_id: int, card_id: str = Query(...), db: Session = Depe
 
 
 @app.get("/api/tables/active")
-def get_active_round(card_id: str = Query(...), db: Session = Depends(get_db)):
+def get_active_round(card_id: str = Query(...), db: Session_ = Depends(get_db),
+                   me: Player = Depends(current_player)):
     """The player's unfinished hand, if they walked away from one."""
+    require_self(me, card_id)
     player = _table_player(db, card_id)
     _expire_stale_crash(db, player)
     db.commit()
@@ -1576,9 +1766,12 @@ def get_active_round(card_id: str = Query(...), db: Session = Depends(get_db)):
 
 
 @app.get("/api/players/{player_id}/table-history")
-def get_table_history(player_id: int, db: Session = Depends(get_db),
-                      limit: int = Query(50, ge=1, le=200)):
+def get_table_history(player_id: int, db: Session_ = Depends(get_db),
+                      limit: int = Query(50, ge=1, le=200),
+                   me: Player = Depends(current_player)):
     """Past hands with the seed context needed to audit each one."""
+    if me.id != player_id:
+        raise HTTPException(status_code=403, detail="That is not your ledger")
     events = (db.query(PlayerEvent)
                 .filter(PlayerEvent.player_id == player_id,
                         PlayerEvent.event_type == "table_round")
@@ -1602,7 +1795,10 @@ def list_preset_rewards():
     return [{"key": k, **v} for k, v in PRESET_REWARDS.items()]
 
 @app.post("/api/worker/redeem")
-def worker_redeem(request: WorkerRedeemRequest, db: Session = Depends(get_db)):
+def worker_redeem(request: WorkerRedeemRequest, db: Session_ = Depends(get_db),
+                  x_worker_pin: str = Header(None)):
+    if x_worker_pin != WORKER_PIN:
+        raise HTTPException(status_code=401, detail="Worker PIN required")
     """Worker redeems points for a preset reward"""
     if request.reward_key not in PRESET_REWARDS:
         raise HTTPException(status_code=400, detail="Invalid reward type")
@@ -1645,7 +1841,7 @@ def worker_redeem(request: WorkerRedeemRequest, db: Session = Depends(get_db)):
 # Routes - Admin List
 # ============================================================
 @app.get("/api/admin/players")
-def list_players(db: Session = Depends(get_db)):
+def list_players(db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """List all players"""
     players = db.query(Player).all()
     result = []
@@ -1664,7 +1860,7 @@ def list_players(db: Session = Depends(get_db)):
     return result
 
 @app.get("/api/admin/transactions/{player_id}")
-def get_player_transactions(player_id: int, db: Session = Depends(get_db)):
+def get_player_transactions(player_id: int, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Get legacy transaction history"""
     transactions = db.query(Transaction).filter(
         Transaction.player_id == player_id

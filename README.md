@@ -399,6 +399,35 @@ server {
 Tables reuse the slots' seed endpoints — `/api/slots/seed` and
 `/api/slots/seed/rotate` cover both.
 
+## Who can get in
+
+The card is the credential. Everything else follows from that.
+
+**Scanning is the only door.** `POST /api/scan` with a registered card returns a
+session token; every endpoint that moves points or reads a private ledger wants
+that token in an `Authorization: Bearer` header. A card ID on its own is no
+longer enough to act as somebody.
+
+- **Only the dealer registers cards.** `POST /api/admin/register` needs the
+  dealer PIN, so nobody can enrol themselves.
+- **A session can only act on its own card.** Presenting a valid token with
+  somebody else's `card_id` is a 403 — which also means the API never confirms
+  whether a card exists.
+- **Tokens expire** (`SESSION_TTL_HOURS`, default 12) and signing out deletes
+  them server-side, so a copied token dies with the sign-out.
+- **Guessing is rate limited.** `SCAN_MAX_FAILURES` bad cards (default 10) from
+  one address earns a `SCAN_LOCKOUT_MINUTES` timeout (default 5).
+- **Card IDs are no longer handed out.** The leaderboard used to include them and
+  `/api/players/search` returned them to anyone — both were effectively publishing
+  everyone's login. Search is now dealer-only and the board carries names only.
+
+Use the real UID off your RFID cards, not something like `TEST123`. The UID is
+the password; a guessable one is a guessable password.
+
+For a friends-only setup, keep the server on your LAN — it binds `0.0.0.0:8000`
+so anything on the network can reach it, which is what you want at home and
+exactly what you do not want on a public IP.
+
 ## Security Notes
 - Change default ADMIN_PIN in `.env`
 - For production, use HTTPS (Let's Encrypt)

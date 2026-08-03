@@ -86,7 +86,7 @@ async function submitDepositRequest() {
     if (!selectedMethod) return showDepositError('Pick a payment method');
 
     try {
-        const resp = await fetch(`${API_BASE}/api/payments/deposit-request`, {
+        const resp = await api(`/api/payments/deposit-request`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ card_id: cardId, amount: amount, method: selectedMethod })
@@ -128,8 +128,9 @@ function renderInstructions(data) {
             ${isCrypto ? `<div class="pay-amount-sub">worth of ${ins.symbol}</div>` : ''}`;
     }
 
+    // qr_url carries its own key: an <img> cannot send an auth header.
     const qrBlock = `
-        <img class="pay-qr" src="${API_BASE}/api/payments/request/${data.request_id}/qr"
+        <img class="pay-qr" src="${API_BASE}${data.qr_url}"
              alt="Payment QR code" onerror="this.style.display='none'">`;
 
     const openLink = ins.uri && (ins.uri.startsWith('http') || isCrypto)
@@ -184,7 +185,7 @@ async function submitTxid() {
     if (!txid) return showResult('txid-result', 'Paste the transaction ID first', 'error');
 
     try {
-        const resp = await fetch(`${API_BASE}/api/payments/request/${activeRequestId}/txid`, {
+        const resp = await api(`/api/payments/request/${activeRequestId}/txid`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ txid: txid })
