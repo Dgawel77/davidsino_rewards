@@ -15,8 +15,28 @@ APP_DIR="${APP_DIR:-$HOME/davidsino}"
 DATA_DIR="${DATA_DIR:-$HOME/davidsino-data}"
 PORT="${PORT:-8000}"
 SERVICE="davidsino"
+# --public example.com puts nginx and a Let's Encrypt certificate in front.
+PUBLIC_DOMAIN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --public) PUBLIC_DOMAIN="${2:-}"; shift 2 ;;
+        --port)   PORT="${2:-8000}"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+
+# Refuse to fight another service for a port rather than half-starting and
+# leaving both broken. This box may already be running something.
+if ss -lntp 2>/dev/null | grep -q ":$PORT "; then
+    if ! systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+        echo "Port $PORT is already taken by something else:"
+        ss -lntp 2>/dev/null | grep ":$PORT " || true
+        echo "Re-run with a different port, e.g.:  bash $0 --port 8010"
+        exit 1
+    fi
+fi
 
 say "Checking prerequisites"
 MISSING=()
@@ -134,6 +154,50 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE.service" "$SERVICE-backup.timer"
+
+if [ -n "$PUBLIC_DOMAIN" ]; then
+    say "Publishing $PUBLIC_DOMAIN to the open internet"
+    sudo apt-get install -y -qq nginx certbot python3-certbot-nginx
+
+    # Only this one vhost is added; anything already served on this box keeps
+    # its own config untouched.
+    sudo tee "/etc/nginx/sites-available/$SERVICE" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $PUBLIC_DOMAIN;
+
+    # The app is small and single-purpose; nothing here needs a big body.
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+    }
+}
+EOF
+    sudo ln -sf "/etc/nginx/sites-available/$SERVICE" "/etc/nginx/sites-enabled/$SERVICE"
+    sudo nginx -t && sudo systemctl reload nginx
+
+    echo
+    echo "Requesting a certificate. This needs $PUBLIC_DOMAIN to already point"
+    echo "at this machine's public IP, or it will fail."
+    sudo certbot --nginx -d "$PUBLIC_DOMAIN" --non-interactive --agree-tos \
+        --register-unsafely-without-email --redirect || {
+        echo
+        echo "Certificate request failed — usually DNS not pointing here yet."
+        echo "Fix the A record, then:  sudo certbot --nginx -d $PUBLIC_DOMAIN"
+    }
+
+    # Bind the app to loopback once nginx fronts it, so the raw port is not
+    # also reachable from outside.
+    sudo sed -i "s|--host 0.0.0.0|--host 127.0.0.1|" "/etc/systemd/system/$SERVICE.service"
+    sudo systemctl daemon-reload && sudo systemctl restart "$SERVICE"
+fi
 
 say "Done"
 sleep 2
