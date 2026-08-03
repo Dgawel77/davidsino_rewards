@@ -131,13 +131,49 @@ class TestBlackjackPlay(unittest.TestCase):
         self.assertEqual(st["hands"][0]["result"], "lose")
         self.assertEqual(st["payout"], 0)
 
-    def test_dealer_stands_on_soft_seventeen(self):
+    def test_dealer_hits_soft_seventeen(self):
         deck = self._stacked(["10♠", "A♥", "9♦", "6♣"])   # dealer A-6 = soft 17
         st = tables.blackjack_start(deck, 100)
         tables.blackjack_act(st, deck, "stand")
-        self.assertEqual(len(st["dealer"]), 2, "dealer drew on soft 17")
+        self.assertGreater(len(st["dealer"]), 2, "dealer stood on soft 17")
+
+    def test_dealer_stands_on_hard_seventeen(self):
+        deck = self._stacked(["10♠", "10♥", "9♦", "7♣"])  # dealer 10-7 = hard 17
+        st = tables.blackjack_start(deck, 100)
+        tables.blackjack_act(st, deck, "stand")
+        self.assertEqual(len(st["dealer"]), 2, "dealer drew on hard 17")
         self.assertEqual(st["dealer_total"], 17)
         self.assertEqual(st["hands"][0]["result"], "win")   # 19 beats 17
+
+    def test_dealer_stands_once_a_soft_seventeen_improves(self):
+        """A-6 draws, but A-6-3 is a hard 20 and must stop."""
+        deck = self._stacked(["10♠", "A♥", "9♦", "6♣", "3♠"])
+        st = tables.blackjack_start(deck, 100)
+        tables.blackjack_act(st, deck, "stand")
+        self.assertEqual(st["dealer"], ["A♥", "6♣", "3♠"])
+        self.assertEqual(st["dealer_total"], 20)
+
+    def test_dealer_never_stops_below_seventeen(self):
+        """
+        Only meaningful when the dealer actually plays. A player natural settles
+        at the deal, and a table where every hand busted is already decided — in
+        both cases the dealer correctly stands pat on whatever two cards it has.
+        """
+        checked = 0
+        for n in range(400):
+            deck = tables.deck_for("blackjack", SS, CS, n)
+            st = tables.blackjack_start(deck, 100)
+            while st["stage"] == "player":
+                tables.blackjack_act(st, deck, "stand")
+            if not any(h["status"] == "stand" for h in st["hands"]):
+                continue
+            checked += 1
+            total = tables.hand_value(st["dealer"])
+            self.assertGreaterEqual(total, 17, f"dealer stopped on {total}")
+            if total == 17:
+                self.assertFalse(tables.is_soft(st["dealer"]),
+                                 "dealer stood on a soft 17")
+        self.assertGreater(checked, 200, "too few hands reached the dealer to be meaningful")
 
     def test_dealer_draws_to_sixteen(self):
         deck = self._stacked(["10♠", "10♥", "9♦", "6♣"])   # dealer 16, must draw

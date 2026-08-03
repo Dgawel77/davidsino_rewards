@@ -213,7 +213,7 @@ never touch a player's cash P/L.
 
 | Game | Bet range | House edge | Notes |
 |---|---|---|---|
-| Blackjack | 25 – 5,000 | **0.65%** measured under basic strategy | 6 decks, dealer stands all 17, BJ pays 3:2 |
+| Blackjack | 25 – 5,000 | **0.64%** measured under basic strategy | 6 decks, dealer **hits soft 17**, BJ pays 3:2 |
 | Baccarat | 25 – 5,000 | 1.06% banker / 1.24% player / 14.36% tie | 8 decks, standard punto banco |
 | Fan-Tan | 25 – 5,000 | 1.25% – 3.75% depending on the bet | beads counted in fours, 5% on winnings |
 | Mississippi Stud | 25 – 1,000 ante | ~4.9% of ante at optimal play | 3 streets, raise 1×–3× or fold |
@@ -221,10 +221,17 @@ never touch a player's cash P/L.
 Every figure above is checked, not claimed:
 
 ```bash
-python3 tests/test_tables.py                    # 83 engine tests
+python3 tests/test_tables.py                    # 86 engine tests
 DAVIDSINO_SLOW=1 python3 tests/test_tables.py   # + all 2,598,960 poker hands enumerated
-python3 scripts/bj_basic_strategy.py 200000     # measure the blackjack edge yourself
+python3 scripts/bj_basic_strategy.py 2000000    # measure the blackjack edge yourself
 ```
+
+The blackjack figure is 0.644% over 2,000,000 hands, which carries a one-sigma
+error of about ±0.08% — blackjack is high-variance, so a short run cannot pin it
+down. The published reference for these rules with unlimited resplits is ~0.62%;
+this table allows one split only, which accounts for the rest. `bj_basic_strategy.py`
+plays the hit-soft-17 chart, including the deviations the rule forces (double
+eleven against an ace, soft eighteen from a deuce, soft nineteen against a six).
 
 The fan-tan and baccarat edges are verified by **exact enumeration** of the
 outcome space, not sampling. The Mississippi Stud paytable is verified by

@@ -78,13 +78,13 @@ def rank_index(card: str) -> int:
 BLACKJACK = {
     "key": "blackjack",
     "name": "Blackjack",
-    "tagline": "Six decks, dealer stands on all 17, blackjack pays 3:2.",
+    "tagline": "Six decks, dealer hits soft 17, blackjack pays 3:2.",
     "min_bet": 25,
     "max_bet": 5000,
     "decks": 6,
     "rules": [
         "Six decks, shuffled fresh every hand",
-        "Dealer stands on all 17, soft or hard",
+        "Dealer hits soft 17 — an ace and a six is not a stand",
         "Blackjack pays 3:2",
         "Double on any first two cards",
         "Split one time; split aces draw one card each",
@@ -223,8 +223,15 @@ def _blackjack_dealer_play(state: dict, deck: list) -> None:
     # No reason to expose the hole card sequence if every hand already busted.
     if all(h["status"] == "bust" for h in state["hands"]):
         return
-    while hand_value(state["dealer"]) < 17 and state["pos"] < len(deck) - 1:
-        state["dealer"].append(_draw(state, deck))
+    while state["pos"] < len(deck) - 1:
+        total = hand_value(state["dealer"])
+        # Hit soft 17: an ace-six draws, a hard seventeen stands. Worth roughly
+        # two tenths of a percent to the house, which is why it is stated plainly
+        # in the rules panel rather than buried.
+        if total < 17 or (total == 17 and is_soft(state["dealer"])):
+            state["dealer"].append(_draw(state, deck))
+        else:
+            break
 
 
 def _blackjack_settle(state: dict) -> None:

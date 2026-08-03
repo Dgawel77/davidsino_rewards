@@ -5,8 +5,12 @@ This is a measuring instrument, not part of the game. It exists so we can state
 the blackjack house edge as something checked rather than something claimed.
 
 Rules assumed (must match tables.BLACKJACK):
-    six decks, dealer stands on all 17, blackjack pays 3:2,
+    six decks, dealer HITS soft 17, blackjack pays 3:2,
     double on any first two cards, double after split, one split only.
+
+The hit-soft-17 deviations from the stands-on-17 chart are marked H17 below.
+They matter: playing the S17 chart against an H17 dealer gives away more than
+the rule itself costs.
 
     python3 scripts/bj_basic_strategy.py 200000
 """
@@ -59,12 +63,14 @@ def decide(hand: dict, up: int, actions: list) -> str:
 
     if soft:
         kicker = total - 11
-        if kicker >= 8:                     # soft 19+
+        if kicker >= 9:                     # soft 20+
             return "stand"
-        if kicker == 7:                     # soft 18
-            if can_double and 3 <= up <= 6:
+        if kicker == 8:                     # soft 19 — H17: double against a six
+            return "double" if (can_double and up == 6) else "stand"
+        if kicker == 7:                     # soft 18 — H17: double from 2, not 3
+            if can_double and 2 <= up <= 6:
                 return "double"
-            return "stand" if up in (2, 7, 8) else "hit"
+            return "stand" if up in (7, 8) else "hit"
         if kicker == 6:
             return "double" if (can_double and 3 <= up <= 6) else "hit"
         if kicker in (4, 5):
@@ -80,7 +86,7 @@ def decide(hand: dict, up: int, actions: list) -> str:
     if total == 12:
         return "stand" if 4 <= up <= 6 else "hit"
     if total == 11:
-        return "double" if (can_double and up <= 10) else "hit"
+        return "double" if can_double else "hit"        # H17: double against an ace too
     if total == 10:
         return "double" if (can_double and up <= 9) else "hit"
     if total == 9:
@@ -122,5 +128,5 @@ if __name__ == "__main__":
     edge = simulate(n)
     print(f"blackjack, basic strategy, {n:,} hands")
     print(f"  house edge on the opening bet: {edge:.3f}%")
-    print("  (published reference for these rules with unlimited resplits is ~0.45%;")
-    print("   allowing only one split accounts for most of the difference)")
+    print("  (published reference for six decks, hit soft 17, DAS and unlimited")
+    print("   resplits is ~0.62%; allowing only one split accounts for the rest)")

@@ -11,6 +11,38 @@ let tableBusy = false;
 const TABLE_BET_STEPS = [25, 50, 100, 250, 500, 1000, 2500, 5000];
 const RED_SUITS = ['♥', '♦'];
 
+// How many cards were on the felt at the last paint, so a hit animates one card
+// arriving instead of re-dealing everything.
+let lastBlackjackCounts = { dealer: 0, hands: [] };
+let lastStudCounts = { hole: 0, community: 0 };
+
+// ===== Sound and motion preferences =====
+function refreshPrefButtons() {
+    const s = document.getElementById('pref-sound');
+    const mo = document.getElementById('pref-motion');
+    if (s) {
+        s.classList.toggle('on', soundOn());
+        document.getElementById('pref-sound-label').textContent =
+            soundOn() ? 'Sound on' : 'Sound off';
+    }
+    if (mo) {
+        mo.classList.toggle('on', motionOn());
+        document.getElementById('pref-motion-label').textContent =
+            motionOn() ? 'Animation on' : 'Animation off';
+    }
+}
+
+function toggleSound() {
+    setSoundOn(!soundOn());
+    refreshPrefButtons();
+    if (soundOn()) SFX.chip();      // confirm it actually works
+}
+
+function toggleMotion() {
+    setMotionOn(!motionOn());
+    refreshPrefButtons();
+}
+
 // ===== Lobby =====
 async function showTablesLobby() {
     showView('tables-lobby-view');
@@ -150,16 +182,32 @@ function enterTableView() {
     document.getElementById('table-bet-label').textContent =
         currentTable.key === 'mississippi' ? 'Ante' : 'Bet per hand';
 
+    lastBlackjackCounts = { dealer: 0, hands: [] };
+    lastStudCounts = { hole: 0, community: 0 };
+
     updateTableBalance(tableBalance);
     updateTableBetDisplay();
     renderBetPicker();
     renderRules();
     renderIdleStage();
+    refreshPrefButtons();
 }
 
-function updateTableBalance(points) {
+function updateTableBalance(points, delta) {
     tableBalance = points;
     document.getElementById('table-balance').textContent = Math.floor(points).toLocaleString();
+
+    const d = document.getElementById('table-delta');
+    if (d) {
+        if (typeof delta === 'number' && delta !== 0) {
+            d.textContent = (delta > 0 ? '+' : '−') + Math.abs(Math.round(delta)).toLocaleString();
+            d.className = 'bank-delta ' + (delta > 0 ? 'up' : 'down');
+        } else {
+            d.textContent = '';
+            d.className = 'bank-delta';
+        }
+    }
+
     const hp = document.getElementById('head-points');
     if (hp) hp.textContent = Math.floor(points).toLocaleString();
     if (currentPlayer) currentPlayer.reward_points = points;
@@ -247,22 +295,29 @@ function toggleFanPick(n) {
 }
 
 // ===== Rendering the felt =====
-function cardHTML(card, dealt) {
+function cardHTML(card, animIndex) {
+    // animIndex >= 0 means this card is new and should slide in, staggered by
+    // its position in the run of new cards. null means paint it already landed.
+    const cls = animIndex === null ? '' : ' deal-anim';
+    const style = animIndex === null ? '' : ` style="--i:${animIndex}"`;
+
     if (!card || card === '??') {
-        return `<div class="playing-card face-down${dealt ? ' dealt' : ''}">
+        return `<div class="playing-card face-down${cls}"${style}>
                     <div class="pc-rank">?</div></div>`;
     }
     const rank = card.slice(0, -1);
     const suit = card.slice(-1);
     const red = RED_SUITS.includes(suit) ? ' red' : '';
-    return `<div class="playing-card${red}${dealt ? ' dealt' : ''}">
+    return `<div class="playing-card${red}${cls}"${style}>
                 <div class="pc-rank">${rank}</div>
                 <div class="pc-suit">${suit}</div>
             </div>`;
 }
 
-function cardsHTML(cards, dealt) {
-    return cards.map(c => cardHTML(c, dealt)).join('');
+// `newCount` is how many of the trailing cards arrived since the last paint.
+function cardsHTML(cards, newCount) {
+    const first = cards.length - (newCount || 0);
+    return cards.map((c, i) => cardHTML(c, i >= first ? i - first : null)).join('');
 }
 
 function renderIdleStage() {
@@ -346,17 +401,19 @@ function setDealEnabled(on) {
 // ===== Instant games: baccarat and fan-tan =====
 function renderInstantResult(data) {
     const stage = document.getElementById('table-stage');
+    const anim = motionOn();
 
     if (data.game === 'baccarat') {
         const winner = data.outcome;
+        playDealSounds(data.player.length + data.banker.length);
         stage.innerHTML = `
             <div class="hand-block">
                 <div class="hand-label">Player<span class="hand-total">${data.player_points}</span></div>
-                <div class="card-row">${cardsHTML(data.player, true)}</div>
+                <div class="card-row">${cardsHTML(data.player, anim ? data.player.length : 0)}</div>
             </div>
             <div class="hand-block">
                 <div class="hand-label">Banker<span class="hand-total">${data.banker_points}</span></div>
-                <div class="card-row">${cardsHTML(data.banker, true)}</div>
+                <div class="card-row">${cardsHTML(data.banker, anim ? data.banker.length : 0)}</div>
             </div>
             <div class="table-note">${data.natural ? 'Natural — no third card drawn. ' : ''}
                 ${winner === 'tie' ? 'A tie.' : `${winner === 'player' ? 'Player' : 'Banker'} wins with ${
@@ -379,6 +436,12 @@ function renderInstantResult(data) {
     if (data.verdict === 'win') showTableResult(`+${Math.round(net).toLocaleString()} points`, 'win');
     else if (data.verdict === 'push') showTableResult('Push — stake returned', '');
     else showTableResult(`−${Math.abs(Math.round(net)).toLocaleString()} points`, 'lose');
+    updateTableBalance(tableBalance, net);
+    setTimeout(() => {
+        if (net > 0) SFX.win();
+        else if (net === 0) SFX.push();
+        else SFX.lose();
+    }, motionOn() ? 420 : 120);
 }
 
 // ===== Live games: blackjack and Mississippi Stud =====
@@ -407,41 +470,98 @@ function renderRound(round) {
         if (net > 0) showTableResult(`+${Math.round(net).toLocaleString()} points`, 'win');
         else if (net === 0) showTableResult('Push — stake returned', '');
         else showTableResult(`−${Math.abs(Math.round(net)).toLocaleString()} points`, 'lose');
+        updateTableBalance(tableBalance, net);
+        playSettleSound(round, net);
+
+        // Straight back to betting — no extra tap to clear the table. The last
+        // hand stays on screen underneath until the next deal replaces it.
+        setTimeout(() => {
+            if (activeRound) return;                       // a new hand already began
+            document.getElementById('table-bet-controls').classList.remove('hidden');
+            renderActions([]);
+        }, motionOn() ? 900 : 250);
     }
+}
+
+function playSettleSound(round, net) {
+    const cardDelay = motionOn() ? 0.35 : 0.1;
+    setTimeout(() => {
+        if (round.game === 'blackjack' &&
+            round.hands.some(h => h.result === 'blackjack')) return SFX.blackjack();
+        if (round.game === 'blackjack' && round.hands.every(h => h.status === 'bust')) return SFX.bust();
+        if (net > 0) SFX.win();
+        else if (net === 0) SFX.push();
+        else SFX.lose();
+    }, cardDelay * 1000);
 }
 
 function renderBlackjack(round) {
     const stage = document.getElementById('table-stage');
     const live = round.stage === 'player';
+    const anim = motionOn();
+
+    // Only cards that are new since the last paint get the dealing animation,
+    // so a hit slides one card in rather than re-dealing the whole table.
+    const prev = lastBlackjackCounts;
+    const dealerNew = Math.max(0, round.dealer.length - (prev.dealer || 0));
 
     const dealerTotal = round.dealer_total != null ? round.dealer_total : '';
-    const hands = round.hands.map((h, i) => {
-        const isActive = live && i === round.active;
-        const verdict = h.result
-            ? `<div class="hand-verdict ${h.result}">${blackjackVerdict(h)}</div>` : '';
+    const dealerBust = typeof dealerTotal === 'number' && dealerTotal > 21;
+
+    const seats = round.hands.map((h, i) => {
+        const isTurn = live && i === round.active;
         const label = round.hands.length > 1 ? `Hand ${i + 1}` : 'You';
+        const newCards = Math.max(0, h.cards.length - (prev.hands[i] || 0));
+        const totalCls = [
+            'seat-total',
+            h.status === 'bust' ? 'bust' : (isTurn ? 'live' : ''),
+            h.soft && h.total <= 21 ? 'soft' : '',
+        ].filter(Boolean).join(' ');
         return `
-            <div class="hand-block ${isActive ? 'active' : ''}">
-                <div class="hand-label">${label}${isActive ? ' — your move' : ''}
-                    <span class="hand-total">${h.total}${h.soft ? ' soft' : ''}</span></div>
-                <div class="card-row">${cardsHTML(h.cards, true)}</div>
-                ${verdict}
+            <div class="seat you ${isTurn ? 'turn' : ''}">
+                <div class="card-row">${cardsHTML(h.cards, anim ? newCards : 0)}</div>
+                <div class="seat-head">
+                    <span class="seat-name">${label}${isTurn ? ' — your move' : ''}</span>
+                    <span class="${totalCls}" data-total>${h.total}</span>
+                </div>
+                ${h.result ? `<div class="seat-verdict ${h.result}">${blackjackVerdict(h)}</div>` : ''}
             </div>`;
     }).join('');
 
     stage.innerHTML = `
-        <div class="hand-block">
-            <div class="hand-label">Dealer<span class="hand-total">${dealerTotal}</span></div>
-            <div class="card-row">${cardsHTML(round.dealer, true)}</div>
+        <div class="seat">
+            <div class="seat-head">
+                <span class="seat-name">Dealer</span>
+                <span class="seat-total ${dealerBust ? 'bust' : ''}" data-total>${dealerTotal}</span>
+            </div>
+            <div class="card-row">${cardsHTML(round.dealer, anim ? dealerNew : 0)}</div>
         </div>
-        ${hands}
-        ${!live && allBust(round) ? '<div class="table-note">Every hand busted, so the dealer had nothing left to beat and stood.</div>' : ''}`;
+        ${seats}
+        ${!live && allBust(round)
+            ? '<div class="table-note">Every hand busted, so the dealer had nothing left to beat and stood.</div>'
+            : ''}`;
+
+    // Remember what is on the felt so the next paint knows what is new.
+    lastBlackjackCounts = {
+        dealer: round.dealer.length,
+        hands: round.hands.map(h => h.cards.length),
+    };
+
+    playDealSounds(dealerNew + round.hands.reduce(
+        (n, h, i) => n + Math.max(0, h.cards.length - (prev.hands[i] || 0)), 0));
 
     renderActions(round.actions.map(a => ({
         action: a,
         label: { hit: 'Hit', stand: 'Stand', double: 'Double', split: 'Split' }[a] || a,
         gold: a === 'hit',
     })));
+}
+
+// One papery skim per new card, spaced to match the visual stagger.
+function playDealSounds(count) {
+    if (!count) return;
+    const gap = motionOn() ? 0.19 : 0.06;
+    for (let i = 0; i < Math.min(count, 8); i++) SFX.deal(i * gap);
 }
 
 function allBust(round) {
@@ -457,16 +577,22 @@ function renderMississippi(round) {
     const stage = document.getElementById('table-stage');
     const live = round.stage === 'playing';
     const slots = 3 - round.community.length;
+    const anim = motionOn();
+
+    const holeNew = Math.max(0, round.hole.length - lastStudCounts.hole);
+    const communityNew = Math.max(0, round.community.length - lastStudCounts.community);
+    lastStudCounts = { hole: round.hole.length, community: round.community.length };
+    playDealSounds(holeNew + communityNew);
 
     stage.innerHTML = `
         <div class="hand-block">
             <div class="hand-label">Your two</div>
-            <div class="card-row">${cardsHTML(round.hole, true)}</div>
+            <div class="card-row">${cardsHTML(round.hole, anim ? holeNew : 0)}</div>
         </div>
         <div class="hand-block">
             <div class="hand-label">The board${round.label ? `<span class="hand-total">${round.label}</span>` : ''}</div>
             <div class="card-row">
-                ${cardsHTML(round.community, true)}
+                ${cardsHTML(round.community, anim ? communityNew : 0)}
                 ${'<div class="card-slot"></div>'.repeat(Math.max(0, slots))}
             </div>
         </div>
@@ -496,20 +622,9 @@ function renderMississippi(round) {
 
 function renderActions(actions) {
     const el = document.getElementById('table-actions');
-    if (!actions.length) {
-        el.innerHTML = `<button class="btn btn-gold" style="flex:1 1 100%;"
-                            onclick="nextHand()">Next hand</button>`;
-        return;
-    }
     el.innerHTML = actions.map(a => `
-        <button class="btn btn-small ${a.gold ? 'btn-gold' : 'btn-secondary'}"
+        <button class="btn ${a.gold ? 'btn-gold' : 'btn-secondary'}"
                 onclick="tableAct('${a.action}', ${a.multiple || 0})">${a.label}</button>`).join('');
-}
-
-function nextHand() {
-    activeRound = null;
-    document.getElementById('table-wager').classList.add('hidden');
-    enterTableView();
 }
 
 async function tableAct(action, multiple) {

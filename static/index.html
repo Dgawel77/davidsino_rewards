@@ -663,8 +663,124 @@
         .hand-verdict.lose, .hand-verdict.bust { color: var(--marker); }
         .hand-verdict.push { color: var(--bone-dim); }
 
-        .table-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-        .table-actions .btn { flex: 1 1 96px; margin-bottom: 0; }
+        /* Big, thumb-sized action buttons. A blackjack decision is the one moment
+           you must not misfire, so these are deliberately oversized. */
+        .table-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+        .table-actions .btn {
+            flex: 1 1 132px;
+            margin-bottom: 0;
+            min-height: 60px;
+            font-size: 0.94rem;
+            letter-spacing: 0.13em;
+            touch-action: manipulation;
+        }
+        .table-actions .btn:active { transform: translateY(1px); }
+
+        /* ---------- the blackjack felt ---------- */
+        .bank-strip {
+            display: flex; align-items: baseline; justify-content: center; gap: 10px;
+            padding: 12px 14px;
+            margin: 0 0 6px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+        }
+        .bank-label {
+            font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.2em;
+            text-transform: uppercase; color: var(--bone-mute);
+        }
+        .bank-value {
+            font-family: var(--mono); font-variant-numeric: tabular-nums;
+            font-size: 1.9rem; font-weight: 600; color: var(--brass); line-height: 1;
+        }
+        .bank-delta {
+            font-family: var(--mono); font-size: 0.8rem; margin-left: 2px;
+        }
+        .bank-delta.up { color: var(--chip); }
+        .bank-delta.down { color: var(--marker); }
+
+        .seat { padding: 12px 0; }
+        .seat-head {
+            display: flex; align-items: center; justify-content: center; gap: 12px;
+            margin-bottom: 9px;
+        }
+        .seat-name {
+            font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.2em;
+            text-transform: uppercase; color: var(--bone-dim);
+        }
+        /* The number you actually play off — readable at arm's length. */
+        .seat-total {
+            font-family: var(--mono); font-variant-numeric: tabular-nums;
+            font-size: 1.6rem; font-weight: 700; line-height: 1;
+            min-width: 62px; padding: 6px 12px;
+            border: 1px solid var(--felt-3); border-radius: var(--r);
+            background: var(--felt);
+        }
+        .seat-total.live { border-color: var(--brass); color: var(--brass); }
+        .seat-total.bust { border-color: var(--marker); color: var(--marker); }
+        .seat-total.soft::after {
+            content: " soft"; font-size: 0.5em; letter-spacing: 0.14em;
+            color: var(--bone-mute); font-weight: 400;
+        }
+        .seat.you { border-top: 1px solid var(--felt-3); }
+        .seat.turn .seat-name { color: var(--brass); }
+
+        .seat-verdict {
+            font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.16em;
+            text-transform: uppercase; margin-top: 9px;
+        }
+        .seat-verdict.win, .seat-verdict.blackjack { color: var(--chip); }
+        .seat-verdict.lose, .seat-verdict.bust { color: var(--marker); }
+        .seat-verdict.push { color: var(--bone-dim); }
+
+        /* Dealing: each card slides in, staggered by JS via --i. */
+        .playing-card.deal-anim {
+            animation: dealcard 0.52s cubic-bezier(0.22, 1.1, 0.36, 1) backwards;
+            animation-delay: calc(var(--i, 0) * 0.19s);
+        }
+        @keyframes dealcard {
+            0%   { opacity: 0; transform: translate(120px, -90px) rotate(22deg) scale(0.82); }
+            65%  { opacity: 1; }
+            100% { opacity: 1; transform: none; }
+        }
+        .playing-card.flip-anim { animation: flipcard 0.5s ease-out backwards; }
+        @keyframes flipcard {
+            0%   { transform: rotateY(90deg) scale(0.9); opacity: 0.3; }
+            100% { transform: none; opacity: 1; }
+        }
+        .seat-total.pop { animation: totalpop 0.34s ease-out; }
+        @keyframes totalpop {
+            0% { transform: scale(1); }
+            45% { transform: scale(1.22); }
+            100% { transform: scale(1); }
+        }
+
+        /* The toggles. Small, out of the way, but always reachable. */
+        .table-prefs {
+            display: flex; gap: 8px; justify-content: center;
+            margin-top: 14px; flex-wrap: wrap;
+        }
+        .pref-toggle {
+            display: inline-flex; align-items: center; gap: 7px;
+            background: var(--felt-2); border: 1px solid var(--felt-3);
+            border-radius: 999px; color: var(--bone-dim);
+            font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.14em;
+            text-transform: uppercase; padding: 8px 13px; cursor: pointer;
+            min-height: 38px;
+        }
+        .pref-toggle:hover { border-color: var(--brass); }
+        .pref-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--bone-mute); flex-shrink: 0;
+        }
+        .pref-toggle.on { color: var(--bone); }
+        .pref-toggle.on .pref-dot { background: var(--chip); }
+
+        @media (prefers-reduced-motion: reduce) {
+            .playing-card.deal-anim, .playing-card.flip-anim, .seat-total.pop {
+                animation: none !important;
+            }
+        }
 
         .bet-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
         .bet-option {
@@ -1541,7 +1657,14 @@
             <div class="card slot-stage">
                 <div class="machine-name" id="table-title"></div>
                 <div class="machine-tagline" id="table-tagline"></div>
-                <div class="slot-balance">Balance <span id="table-balance">0</span></div>
+
+                <!-- Balance sits at the top of the felt, in the biggest numerals
+                     on the screen — it is the number you check between hands. -->
+                <div class="bank-strip">
+                    <span class="bank-label">Balance</span>
+                    <span class="bank-value" id="table-balance">0</span>
+                    <span class="bank-delta" id="table-delta"></span>
+                </div>
 
                 <!-- Each game renders its own felt into here. -->
                 <div id="table-stage"></div>
@@ -1563,6 +1686,13 @@
 
                 <div id="table-actions" class="table-actions"></div>
                 <div id="table-wager" class="wager-line hidden"></div>
+
+                <div class="table-prefs">
+                    <button class="pref-toggle" id="pref-sound" onclick="toggleSound()">
+                        <span class="pref-dot"></span><span id="pref-sound-label">Sound</span></button>
+                    <button class="pref-toggle" id="pref-motion" onclick="toggleMotion()">
+                        <span class="pref-dot"></span><span id="pref-motion-label">Animation</span></button>
+                </div>
 
                 <div class="slot-actions">
                     <button class="btn btn-small btn-secondary" style="flex:1;" onclick="toggleTableRules()">Rules</button>
@@ -1770,6 +1900,7 @@
 
     <!-- ?v= is stamped by the server from the newest asset mtime, so a redeploy
          can never leave a browser running a mix of old and new bundles. -->
+    <script src="/static/sfx.js?v=__ASSET_VERSION__"></script>
     <script src="/static/app.js?v=__ASSET_VERSION__"></script>
     <script src="/static/slots.js?v=__ASSET_VERSION__"></script>
     <script src="/static/tables.js?v=__ASSET_VERSION__"></script>
