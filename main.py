@@ -2,6 +2,7 @@
 Davidsino Rewards - FastAPI Backend
 Tracks player points, deposits, PNL, and event history for the casino loyalty program.
 """
+import copy
 import os
 import json
 from datetime import datetime, timezone, timedelta, date
@@ -20,6 +21,7 @@ from typing import Optional, List
 import slots as slots_engine
 import payments as payments_lib
 import tables as tables_engine
+import arcade as arcade_engine
 
 load_dotenv()
 
@@ -250,16 +252,20 @@ class TableDealRequest(BaseModel):
     card_id: str
     game: str
     bet: float
-    # Instant games (baccarat, fan-tan) settle in this one call, so they carry
-    # their bet selection with the deal.
+    # Instant games (baccarat, fan-tan, plinko) settle in this one call, so they
+    # carry their bet selection with the deal.
     bet_type: Optional[str] = None
     picks: Optional[List[int]] = None
+    risk: Optional[str] = None        # plinko
+    mines: Optional[int] = None       # mines
+    target: Optional[float] = None    # crash auto cash-out
 
 class TableActionRequest(BaseModel):
     card_id: str
     round_id: int
     action: str
     multiple: Optional[int] = None
+    tile: Optional[int] = None        # mines
 
 # ============================================================
 # FastAPI App
@@ -1195,6 +1201,56 @@ def get_slot_history(player_id: int, db: Session = Depends(get_db),
 # Tables share the slots' seed pair on purpose: one rotation reveals the secret
 # behind every game the player has touched, so a single audit covers the floor.
 
+def _game_def(key: str) -> dict:
+    """Games live in two engines; the routes should not care which."""
+    if key in tables_engine.TABLES:
+        return tables_engine.TABLES[key]
+    if key in arcade_engine.GAMES:
+        return arcade_engine.GAMES[key]
+    raise HTTPException(status_code=400, detail="Unknown game")
+
+
+def _is_instant(key: str) -> bool:
+    return key in tables_engine.INSTANT_GAMES or key in arcade_engine.INSTANT_GAMES
+
+
+def _is_round(key: str) -> bool:
+    return key in tables_engine.ROUND_GAMES or key in arcade_engine.ROUND_GAMES
+
+
+def _elapsed_seconds(state: dict) -> float:
+    """Seconds since a crash round started, measured entirely on the server."""
+    started = state.get("started_at")
+    if not started:
+        return 0.0
+    began = datetime.fromisoformat(started)
+    if began.tzinfo is None:
+        began = began.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - began).total_seconds())
+
+
+def _expire_stale_crash(db: Session, player: Player) -> None:
+    """
+    Settle any crash round whose rocket has already gone.
+
+    A player who closes the tab mid-flight leaves an "active" round behind. It
+    busted at a point fixed before the round began, so the outcome is not in
+    doubt — but leaving it open would block the next round and hold the stake.
+    """
+    rounds = (db.query(TableRound)
+                .filter(TableRound.player_id == player.id,
+                        TableRound.game == "crash",
+                        TableRound.status == "active")
+                .all())
+    for rnd in rounds:
+        state = dict(rnd.state_json or {})
+        if state.get("stage") != "flying":
+            continue
+        bust_at = arcade_engine.crash_time_to(state.get("bust", 1.0))
+        if _elapsed_seconds(state) >= bust_at:
+            _settle_round(db, player, rnd, arcade_engine.crash_expire(state))
+
+
 def _table_player(db: Session, card_id: str) -> Player:
     player = db.query(Player).filter(Player.card_id == card_id).first()
     if not player:
@@ -1221,8 +1277,14 @@ def _check_bet(game: dict, bet: float, player: Player, need: float = None) -> fl
 def _round_public(rnd: TableRound, state: dict) -> dict:
     if rnd.game == "blackjack":
         view = tables_engine.blackjack_public(state)
-    else:
+    elif rnd.game == "mississippi":
         view = tables_engine.mississippi_public(state)
+    elif rnd.game == "crash":
+        view = arcade_engine.crash_public(state, _elapsed_seconds(state))
+    elif rnd.game == "mines":
+        view = arcade_engine.mines_public(state)
+    else:
+        raise HTTPException(status_code=400, detail="Unknown game")
     return {
         "round_id": rnd.id,
         "game": rnd.game,
@@ -1251,11 +1313,17 @@ def _settle_round(db: Session, player: Player, rnd: TableRound, state: dict) -> 
     rnd.state_json = state
 
     net = payout - rnd.wagered
-    game = tables_engine.TABLES[rnd.game]
+    game = _game_def(rnd.game)
     if rnd.game == "blackjack":
         outcome = ", ".join(h["result"] or "?" for h in state["hands"])
-    else:
+    elif rnd.game == "mississippi":
         outcome = state.get("label", "?")
+    elif rnd.game == "crash":
+        outcome = (f"cashed out at {state['cashed_at']:.2f}x" if state.get("cashed_at")
+                   else f"busted at {state['bust']:.2f}x")
+    else:
+        outcome = (f"hit a mine on pick {len(state['picked'])}" if state.get("hit") is not None
+                   else f"cashed out after {len(state['picked'])} safe")
 
     record_event(
         db, player.id, "table_round",
@@ -1273,7 +1341,7 @@ def _settle_round(db: Session, player: Player, rnd: TableRound, state: dict) -> 
 
 @app.get("/api/tables/games")
 def get_table_games():
-    return {"games": tables_engine.table_list()}
+    return {"games": tables_engine.table_list() + arcade_engine.game_list()}
 
 
 @app.post("/api/tables/deal")
@@ -1282,9 +1350,7 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
     Start a hand. Baccarat and fan-tan settle right here; blackjack and
     Mississippi Stud return a live round to act on.
     """
-    if request.game not in tables_engine.TABLES:
-        raise HTTPException(status_code=400, detail="Unknown game")
-    game = tables_engine.TABLES[request.game]
+    game = _game_def(request.game)
     player = _table_player(db, request.card_id)
 
     # Mississippi Stud can be raised up to 9x the ante beyond it, so make sure
@@ -1297,7 +1363,8 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
     # debited — and the lobby only ever surfaces the most recent open round, so
     # those points would quietly strand. Instant games settle in this call and
     # can never strand anything, so they stay available.
-    if request.game in tables_engine.ROUND_GAMES:
+    _expire_stale_crash(db, player)
+    if _is_round(request.game):
         open_round = (db.query(TableRound)
                         .filter(TableRound.player_id == player.id,
                                 TableRound.status == "active")
@@ -1305,17 +1372,22 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
         if open_round:
             raise HTTPException(
                 status_code=409,
-                detail=f"Finish your open {tables_engine.TABLES[open_round.game]['name']} "
-                       f"hand first — {open_round.wagered:.0f} points are still on it.")
+                detail=f"Finish your open {_game_def(open_round.game)['name']} "
+                       f"round first — {open_round.wagered:.0f} points are still on it.")
 
     # Lock the seed row so two concurrent hands can never share a nonce.
     seed = _active_seed(db, player.id, lock=True)
     nonce = seed.nonce
     seed.nonce = nonce + 1
 
-    if request.game in tables_engine.INSTANT_GAMES:
+    if _is_instant(request.game):
         try:
-            if request.game == "baccarat":
+            if request.game == "plinko":
+                drop = arcade_engine.plinko_drop(
+                    request.risk or "medium", seed.server_seed, seed.client_seed, nonce)
+                settled = arcade_engine.plinko_settle(drop, bet)
+                detail = settled
+            elif request.game == "baccarat":
                 deck = tables_engine.deck_for("baccarat", seed.server_seed, seed.client_seed, nonce)
                 deal = tables_engine.baccarat_deal(deck)
                 settled = tables_engine.baccarat_settle(deal, request.bet_type or "player", bet)
@@ -1350,11 +1422,26 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
         }
 
     # --- live rounds ---
-    deck = tables_engine.deck_for(request.game, seed.server_seed, seed.client_seed, nonce)
-    if request.game == "blackjack":
-        state = tables_engine.blackjack_start(deck, bet)
-    else:
-        state = tables_engine.mississippi_start(deck, bet)
+    try:
+        if request.game == "blackjack":
+            deck = tables_engine.deck_for(request.game, seed.server_seed, seed.client_seed, nonce)
+            state = tables_engine.blackjack_start(deck, bet)
+        elif request.game == "mississippi":
+            deck = tables_engine.deck_for(request.game, seed.server_seed, seed.client_seed, nonce)
+            state = tables_engine.mississippi_start(deck, bet)
+        elif request.game == "crash":
+            bust = arcade_engine.crash_point(seed.server_seed, seed.client_seed, nonce)
+            state = arcade_engine.crash_start(bust, bet, request.target)
+            # Stamped by the server, and the only clock the cash-out is measured
+            # against — a client-supplied multiplier would just claim the bust.
+            state["started_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            mine_count = request.mines or arcade_engine.MINES["default_mines"]
+            layout = arcade_engine.mines_layout(
+                mine_count, seed.server_seed, seed.client_seed, nonce)
+            state = arcade_engine.mines_start(layout, mine_count, bet)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     rnd = TableRound(
         player_id=player.id, game=request.game, nonce=nonce,
@@ -1400,9 +1487,14 @@ def table_action(request: TableActionRequest, db: Session = Depends(get_db)):
                             detail="The seed for this hand was rotated — it can no longer be played out")
 
     # Re-derive the exact shoe this hand was dealt from. Nothing about the cards
-    # is read back from the database.
-    deck = tables_engine.deck_for(rnd.game, seed.server_seed, seed.client_seed, rnd.nonce)
-    state = dict(rnd.state_json or {})
+    # is read back from the database. Arcade rounds have no shoe.
+    deck = (tables_engine.deck_for(rnd.game, seed.server_seed, seed.client_seed, rnd.nonce)
+            if rnd.game in tables_engine.ROUND_GAMES else None)
+    # Deep copy, not dict(): a shallow copy shares the nested lists with the
+    # value SQLAlchemy loaded, so mutating them changes the "old" value too and
+    # the assignment below looks like a no-op. A mines pick that only appends to
+    # state["picked"] would then never be written back at all.
+    state = copy.deepcopy(rnd.state_json or {})
 
     # Any raise has to be affordable before it is applied.
     prospective = 0.0
@@ -1418,9 +1510,23 @@ def table_action(request: TableActionRequest, db: Session = Depends(get_db)):
     try:
         if rnd.game == "blackjack":
             state = tables_engine.blackjack_act(state, deck, request.action)
-        else:
+        elif rnd.game == "mississippi":
             state = tables_engine.mississippi_act(state, deck, request.action,
                                                   request.multiple or 0)
+        elif rnd.game == "crash":
+            if request.action != "cashout":
+                raise ValueError("The only move in crash is to cash out")
+            # Elapsed time comes from the server's own stamp, never the client.
+            state = arcade_engine.crash_cash_out(state, _elapsed_seconds(state))
+        elif rnd.game == "mines":
+            if request.action == "cashout":
+                state = arcade_engine.mines_cash_out(state)
+            elif request.action == "pick":
+                state = arcade_engine.mines_pick(state, request.tile)
+            else:
+                raise ValueError("Unknown move")
+        else:
+            raise ValueError("Unknown game")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1459,6 +1565,8 @@ def get_table_round(round_id: int, card_id: str = Query(...), db: Session = Depe
 def get_active_round(card_id: str = Query(...), db: Session = Depends(get_db)):
     """The player's unfinished hand, if they walked away from one."""
     player = _table_player(db, card_id)
+    _expire_stale_crash(db, player)
+    db.commit()
     rnd = (db.query(TableRound)
              .filter(TableRound.player_id == player.id, TableRound.status == "active")
              .order_by(TableRound.id.desc()).first())
