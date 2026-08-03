@@ -11,12 +11,15 @@ Loyalty and rewards tracking system for The Davidsino.
 - **Crypto deposits** — BTC/ETH/LTC/SOL/USDT/USDC with QR codes and live rates
 - **Provably fair slots** — three machines players can wager reward points on,
   with cryptographic proof the house isn't rigging results
+- **Provably fair table games** — blackjack, baccarat, fan-tan and Mississippi
+  Stud, dealt from the same commit/reveal seed as the slots
 
 ## Architecture
 - **Backend:** FastAPI (Python) + PostgreSQL (SQLite works for local dev)
 - **Frontend:** Vanilla HTML/CSS/JS (mobile-responsive)
 - **Card Reading:** USB HID readers (keyboard input) + Web NFC (Android Chrome)
 - **Slot engine:** `slots.py` — HMAC-SHA256 commit/reveal RNG, no dependencies
+- **Table engine:** `tables.py` — same RNG, driving a Fisher-Yates shuffle
 - **Payments:** `payments.py` — address book + payment URIs, no custody
 
 ## Quick Start
@@ -203,6 +206,57 @@ The script confirms `sha256(revealed) == committed hash`, then prints the grids.
 If they match what you saw on screen, the results were fixed before you ever hit
 SPIN. It talks to no server — it only needs `slots.py` and Python 3.
 
+## Provably Fair Table Games
+
+Four games, wagering **reward points only** — same rule as the slots, a hand can
+never touch a player's cash P/L.
+
+| Game | Bet range | House edge | Notes |
+|---|---|---|---|
+| Blackjack | 25 – 5,000 | **0.65%** measured under basic strategy | 6 decks, dealer stands all 17, BJ pays 3:2 |
+| Baccarat | 25 – 5,000 | 1.06% banker / 1.24% player / 14.36% tie | 8 decks, standard punto banco |
+| Fan-Tan | 25 – 5,000 | 1.25% – 3.75% depending on the bet | beads counted in fours, 5% on winnings |
+| Mississippi Stud | 25 – 1,000 ante | ~4.9% of ante at optimal play | 3 streets, raise 1×–3× or fold |
+
+Every figure above is checked, not claimed:
+
+```bash
+python3 tests/test_tables.py                    # 83 engine tests
+DAVIDSINO_SLOW=1 python3 tests/test_tables.py   # + all 2,598,960 poker hands enumerated
+python3 scripts/bj_basic_strategy.py 200000     # measure the blackjack edge yourself
+```
+
+The fan-tan and baccarat edges are verified by **exact enumeration** of the
+outcome space, not sampling. The Mississippi Stud paytable is verified by
+classifying every one of the 2,598,960 possible five-card hands and comparing the
+category counts to published poker frequencies — all twelve match exactly.
+
+### When the cards are decided
+
+This is the part that matters for a table game:
+
+> The entire shoe is shuffled **once**, at the start of the hand, from
+> `(server_seed, client_seed, nonce)`. Every card that will be dealt is fixed
+> before you make a single decision.
+
+So the house cannot look at your hit and then choose a card to bust you — that
+card was already sitting at that position in the shoe. A hand spanning several
+requests (blackjack, Mississippi Stud) is verifiable end to end: reveal the seed,
+re-run the shuffle, and every card that appeared must match, in order.
+
+The server stores **no cards** for a live hand — only the seed context and the
+decisions made. The shoe is re-derived from the seed on every request, so there
+is exactly one source of truth for what was dealt.
+
+Tables share the slots' seed pair, so one rotation audits the whole floor:
+
+```bash
+python3 scripts/verify_table.py \
+    --server-seed <revealed seed> --client-seed <your seed> \
+    --hash <hash you were shown before playing> \
+    --game blackjack --nonce 7
+```
+
 ## Production Deployment
 
 ### Option 1: Docker Compose (Recommended)
@@ -292,6 +346,17 @@ server {
 - `POST /api/slots/spin` - Spin (wagers reward points)
 - `POST /api/slots/verify` - Recompute any spin from revealed values
 - `GET /api/players/{id}/slot-history` - Past spins with seed context
+
+### Tables
+- `GET /api/tables/games` - Game list, limits, bet types and paytables
+- `POST /api/tables/deal` - Start a hand *(baccarat and fan-tan settle here)*
+- `POST /api/tables/action` - Hit/stand/double/split, or raise/fold
+- `GET /api/tables/round/{id}?card_id=` - Re-read one hand
+- `GET /api/tables/active?card_id=` - Recover an interrupted hand
+- `GET /api/players/{id}/table-history` - Past hands with seed context
+
+Tables reuse the slots' seed endpoints — `/api/slots/seed` and
+`/api/slots/seed/rotate` cover both.
 
 ## Security Notes
 - Change default ADMIN_PIN in `.env`

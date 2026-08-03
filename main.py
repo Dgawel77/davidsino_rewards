@@ -19,6 +19,7 @@ from typing import Optional, List
 
 import slots as slots_engine
 import payments as payments_lib
+import tables as tables_engine
 
 load_dotenv()
 
@@ -132,6 +133,32 @@ class PendingDeposit(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     resolved_at = Column(DateTime, nullable=True)
 
+class TableRound(Base):
+    """
+    One hand of a table game that spans more than a single request.
+
+    Blackjack and Mississippi Stud need somewhere to keep the hand between a
+    deal and a decision. The cards are NOT stored — only the seed context and
+    the choices made — so the shoe is re-derived from (server_seed, client_seed,
+    nonce) on every request. That keeps a single source of truth for what was
+    dealt: the seed. The state blob holds positions and bets, never a deck the
+    server could quietly rewrite.
+    """
+    __tablename__ = "table_rounds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    game = Column(String(30), nullable=False, index=True)
+    nonce = Column(Integer, nullable=False)
+    client_seed = Column(String(64), nullable=False)
+    server_seed_hash = Column(String(64), nullable=False, index=True)
+    state_json = Column(JSONType, default=dict)
+    wagered = Column(Float, default=0.0, nullable=False)   # points already debited
+    payout = Column(Float, default=0.0, nullable=False)
+    status = Column(String(20), default="active", nullable=False, index=True)  # active|settled
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    settled_at = Column(DateTime, nullable=True)
+
 # Create all tables
 Base.metadata.create_all(bind=engine)
 
@@ -218,6 +245,21 @@ class DepositRequestCreate(BaseModel):
 
 class TxidRequest(BaseModel):
     txid: str
+
+class TableDealRequest(BaseModel):
+    card_id: str
+    game: str
+    bet: float
+    # Instant games (baccarat, fan-tan) settle in this one call, so they carry
+    # their bet selection with the deal.
+    bet_type: Optional[str] = None
+    picks: Optional[List[int]] = None
+
+class TableActionRequest(BaseModel):
+    card_id: str
+    round_id: int
+    action: str
+    multiple: Optional[int] = None
 
 # ============================================================
 # FastAPI App
@@ -1105,6 +1147,286 @@ def get_slot_history(player_id: int, db: Session = Depends(get_db),
         "created_at": e.created_at.isoformat() if e.created_at else None,
         **(e.metadata_json or {}),
     } for e in events]}
+
+# ============================================================
+# Routes - Table games
+# ============================================================
+# Tables share the slots' seed pair on purpose: one rotation reveals the secret
+# behind every game the player has touched, so a single audit covers the floor.
+
+def _table_player(db: Session, card_id: str) -> Player:
+    player = db.query(Player).filter(Player.card_id == card_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    return player
+
+
+def _check_bet(game: dict, bet: float, player: Player, need: float = None) -> float:
+    bet = round(float(bet), 2)
+    if bet <= 0:
+        raise HTTPException(status_code=400, detail="Bet must be positive")
+    if bet < game["min_bet"] or bet > game["max_bet"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{game['name']} takes {game['min_bet']:,} to {game['max_bet']:,} per hand")
+    required = bet if need is None else need
+    if player.reward_points < required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient points. Need {required:.0f}, have {player.reward_points:.0f}")
+    return bet
+
+
+def _round_public(rnd: TableRound, state: dict) -> dict:
+    if rnd.game == "blackjack":
+        view = tables_engine.blackjack_public(state)
+    else:
+        view = tables_engine.mississippi_public(state)
+    return {
+        "round_id": rnd.id,
+        "game": rnd.game,
+        "status": rnd.status,
+        "nonce": rnd.nonce,
+        "client_seed": rnd.client_seed,
+        "server_seed_hash": rnd.server_seed_hash,
+        **view,
+    }
+
+
+def _settle_round(db: Session, player: Player, rnd: TableRound, state: dict) -> None:
+    """Credit the payout, close the round, and write one auditable event."""
+    payout = round(float(state.get("payout", 0.0)), 2)
+    extra_wagered = round(float(state["wagered"]), 2) - rnd.wagered
+    if extra_wagered > 0:
+        # Raises and doubles taken during the hand are debited at settle time,
+        # having already been checked against the balance when they were made.
+        player.reward_points -= extra_wagered
+        rnd.wagered = round(float(state["wagered"]), 2)
+
+    player.reward_points += payout
+    rnd.payout = payout
+    rnd.status = "settled"
+    rnd.settled_at = datetime.now(timezone.utc)
+    rnd.state_json = state
+
+    net = payout - rnd.wagered
+    game = tables_engine.TABLES[rnd.game]
+    if rnd.game == "blackjack":
+        outcome = ", ".join(h["result"] or "?" for h in state["hands"])
+    else:
+        outcome = state.get("label", "?")
+
+    record_event(
+        db, player.id, "table_round",
+        points_delta=net,
+        metadata={
+            "game": rnd.game, "round_id": rnd.id,
+            "wagered": rnd.wagered, "payout": payout,
+            "nonce": rnd.nonce, "client_seed": rnd.client_seed,
+            "server_seed_hash": rnd.server_seed_hash,
+            "state": state,
+        },
+        description=f"{game['name']}: wagered {rnd.wagered:.0f}, {outcome} ({net:+.0f} pts)",
+    )
+
+
+@app.get("/api/tables/games")
+def get_table_games():
+    return {"games": tables_engine.table_list()}
+
+
+@app.post("/api/tables/deal")
+def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
+    """
+    Start a hand. Baccarat and fan-tan settle right here; blackjack and
+    Mississippi Stud return a live round to act on.
+    """
+    if request.game not in tables_engine.TABLES:
+        raise HTTPException(status_code=400, detail="Unknown game")
+    game = tables_engine.TABLES[request.game]
+    player = _table_player(db, request.card_id)
+
+    # Mississippi Stud can be raised up to 9x the ante beyond it, so make sure
+    # the player can at least cover the ante plus a 1x on every street.
+    upfront = request.bet * 4 if request.game == "mississippi" else request.bet
+    bet = _check_bet(game, request.bet, player, need=upfront if request.game == "mississippi" else None)
+
+    # Lock the seed row so two concurrent hands can never share a nonce.
+    seed = _active_seed(db, player.id, lock=True)
+    nonce = seed.nonce
+    seed.nonce = nonce + 1
+
+    if request.game in tables_engine.INSTANT_GAMES:
+        try:
+            if request.game == "baccarat":
+                deck = tables_engine.deck_for("baccarat", seed.server_seed, seed.client_seed, nonce)
+                deal = tables_engine.baccarat_deal(deck)
+                settled = tables_engine.baccarat_settle(deal, request.bet_type or "player", bet)
+                detail = {**deal, **settled}
+            else:
+                draw = tables_engine.fan_tan_draw(seed.server_seed, seed.client_seed, nonce)
+                settled = tables_engine.fan_tan_settle(
+                    draw, request.bet_type or "fan", request.picks or [1], bet)
+                detail = settled
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        net = settled["payout"] - bet
+        player.reward_points += net
+        record_event(
+            db, player.id, "table_round",
+            points_delta=net,
+            metadata={"game": request.game, "bet": bet, "bet_type": request.bet_type,
+                      "nonce": nonce, "client_seed": seed.client_seed,
+                      "server_seed_hash": seed.server_seed_hash, "result": detail},
+            description=f"{game['name']}: bet {bet:.0f} on {request.bet_type}, "
+                        f"{settled['verdict']} ({net:+.0f} pts)",
+        )
+        db.commit()
+        db.refresh(player)
+        return {
+            "game": request.game, "settled": True, "bet": bet,
+            "nonce": nonce, "client_seed": seed.client_seed,
+            "server_seed_hash": seed.server_seed_hash,
+            "reward_points": player.reward_points, "net": net,
+            **detail,
+        }
+
+    # --- live rounds ---
+    deck = tables_engine.deck_for(request.game, seed.server_seed, seed.client_seed, nonce)
+    if request.game == "blackjack":
+        state = tables_engine.blackjack_start(deck, bet)
+    else:
+        state = tables_engine.mississippi_start(deck, bet)
+
+    rnd = TableRound(
+        player_id=player.id, game=request.game, nonce=nonce,
+        client_seed=seed.client_seed, server_seed_hash=seed.server_seed_hash,
+        state_json=state, wagered=bet, status="active",
+    )
+    # The opening wager leaves the balance immediately, win or lose.
+    player.reward_points -= bet
+    db.add(rnd)
+    db.flush()
+
+    if state["stage"] in ("settled", "folded"):
+        _settle_round(db, player, rnd, state)
+
+    db.commit()
+    db.refresh(rnd)
+    db.refresh(player)
+
+    out = _round_public(rnd, rnd.state_json)
+    out["reward_points"] = player.reward_points
+    return out
+
+
+@app.post("/api/tables/action")
+def table_action(request: TableActionRequest, db: Session = Depends(get_db)):
+    """Hit, stand, double, split — or in Mississippi Stud, raise or fold."""
+    player = _table_player(db, request.card_id)
+
+    rnd = (db.query(TableRound)
+             .filter(TableRound.id == request.round_id)
+             .with_for_update()
+             .first())
+    if not rnd or rnd.player_id != player.id:
+        raise HTTPException(status_code=404, detail="Round not found")
+    if rnd.status != "active":
+        raise HTTPException(status_code=400, detail="That hand is already finished")
+
+    seed = db.query(SlotSeed).filter(
+        SlotSeed.player_id == player.id,
+        SlotSeed.server_seed_hash == rnd.server_seed_hash).first()
+    if not seed:
+        raise HTTPException(status_code=409,
+                            detail="The seed for this hand was rotated — it can no longer be played out")
+
+    # Re-derive the exact shoe this hand was dealt from. Nothing about the cards
+    # is read back from the database.
+    deck = tables_engine.deck_for(rnd.game, seed.server_seed, seed.client_seed, rnd.nonce)
+    state = dict(rnd.state_json or {})
+
+    # Any raise has to be affordable before it is applied.
+    prospective = 0.0
+    if rnd.game == "blackjack" and request.action in ("double", "split"):
+        prospective = state["hands"][state["active"]]["bet"]
+    elif rnd.game == "mississippi" and request.action == "raise":
+        prospective = state["ante"] * (request.multiple or 0)
+    if prospective and player.reward_points < prospective:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient points. Need {prospective:.0f}, have {player.reward_points:.0f}")
+
+    try:
+        if rnd.game == "blackjack":
+            state = tables_engine.blackjack_act(state, deck, request.action)
+        else:
+            state = tables_engine.mississippi_act(state, deck, request.action,
+                                                  request.multiple or 0)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if state["stage"] in ("settled", "folded"):
+        _settle_round(db, player, rnd, state)
+    else:
+        # Debit raises as they are made, so the balance on screen stays honest.
+        extra = round(float(state["wagered"]), 2) - rnd.wagered
+        if extra > 0:
+            player.reward_points -= extra
+            rnd.wagered = round(float(state["wagered"]), 2)
+        rnd.state_json = state
+
+    db.commit()
+    db.refresh(rnd)
+    db.refresh(player)
+
+    out = _round_public(rnd, rnd.state_json)
+    out["reward_points"] = player.reward_points
+    return out
+
+
+@app.get("/api/tables/round/{round_id}")
+def get_table_round(round_id: int, card_id: str = Query(...), db: Session = Depends(get_db)):
+    """Recover a hand that was interrupted — a closed tab, a dead phone."""
+    player = _table_player(db, card_id)
+    rnd = db.query(TableRound).filter(TableRound.id == round_id).first()
+    if not rnd or rnd.player_id != player.id:
+        raise HTTPException(status_code=404, detail="Round not found")
+    out = _round_public(rnd, rnd.state_json or {})
+    out["reward_points"] = player.reward_points
+    return out
+
+
+@app.get("/api/tables/active")
+def get_active_round(card_id: str = Query(...), db: Session = Depends(get_db)):
+    """The player's unfinished hand, if they walked away from one."""
+    player = _table_player(db, card_id)
+    rnd = (db.query(TableRound)
+             .filter(TableRound.player_id == player.id, TableRound.status == "active")
+             .order_by(TableRound.id.desc()).first())
+    if not rnd:
+        return {"active": None}
+    return {"active": _round_public(rnd, rnd.state_json or {})}
+
+
+@app.get("/api/players/{player_id}/table-history")
+def get_table_history(player_id: int, db: Session = Depends(get_db),
+                      limit: int = Query(50, ge=1, le=200)):
+    """Past hands with the seed context needed to audit each one."""
+    events = (db.query(PlayerEvent)
+                .filter(PlayerEvent.player_id == player_id,
+                        PlayerEvent.event_type == "table_round")
+                .order_by(PlayerEvent.created_at.desc())
+                .limit(limit).all())
+    return {"rounds": [{
+        "id": e.id,
+        "points_delta": float(e.points_delta),
+        "description": e.description,
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+        **(e.metadata_json or {}),
+    } for e in events]}
+
 
 # ============================================================
 # Routes - Worker

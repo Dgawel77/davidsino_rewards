@@ -605,6 +605,136 @@
             margin-top: 10px;
         }
 
+        /* ---------- table games ---------- */
+        /* Real cards, not emoji: a rectangle with a rank in the corner reads as
+           a card at any size, and the red suits carry the only warm colour on
+           the felt. */
+        .card-row {
+            display: flex; flex-wrap: wrap; gap: 7px;
+            justify-content: center; align-items: center;
+            min-height: 84px;
+        }
+        .playing-card {
+            width: 54px; height: 76px;
+            border-radius: 5px;
+            background: var(--bone);
+            color: #16211C;
+            border: 1px solid rgba(0, 0, 0, 0.35);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            font-family: var(--sans);
+            line-height: 1;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+            flex-shrink: 0;
+        }
+        .playing-card .pc-rank { font-size: 1.32rem; font-weight: 700; letter-spacing: -0.03em; }
+        .playing-card .pc-suit { font-size: 1.02rem; margin-top: 2px; }
+        .playing-card.red { color: #B02A24; }
+        .playing-card.face-down {
+            background: repeating-linear-gradient(45deg, var(--felt-3), var(--felt-3) 4px,
+                                                  var(--felt-2) 4px, var(--felt-2) 8px);
+            border-color: var(--felt-3);
+            color: var(--bone-mute);
+        }
+        .playing-card.face-down .pc-rank { font-size: 1rem; font-weight: 500; }
+        .playing-card.dealt { animation: dealin 0.22s ease-out; }
+        @keyframes dealin {
+            from { opacity: 0; transform: translateY(-14px) rotate(-6deg); }
+            to   { opacity: 1; transform: none; }
+        }
+        .card-slot {
+            width: 54px; height: 76px; border-radius: 5px;
+            border: 1px dashed var(--felt-3); flex-shrink: 0;
+        }
+
+        .hand-block { margin-bottom: 14px; }
+        .hand-label {
+            font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.18em;
+            text-transform: uppercase; color: var(--bone-mute); margin-bottom: 7px;
+        }
+        .hand-label .hand-total { color: var(--bone); margin-left: 6px; }
+        .hand-block.active { position: relative; }
+        .hand-block.active .hand-label .hand-total { color: var(--brass); }
+        .hand-verdict {
+            font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
+            text-transform: uppercase; margin-top: 6px;
+        }
+        .hand-verdict.win, .hand-verdict.blackjack { color: var(--chip); }
+        .hand-verdict.lose, .hand-verdict.bust { color: var(--marker); }
+        .hand-verdict.push { color: var(--bone-dim); }
+
+        .table-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+        .table-actions .btn { flex: 1 1 96px; margin-bottom: 0; }
+
+        .bet-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+        .bet-option {
+            flex: 1 1 96px;
+            padding: 11px 10px;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            cursor: pointer;
+            text-align: center;
+        }
+        .bet-option:hover { border-color: var(--brass); }
+        .bet-option.selected { border-color: var(--brass); background: rgba(201, 162, 39, 0.1); }
+        .bet-option-label { font-weight: 600; font-size: 0.9rem; }
+        .bet-option-pays {
+            font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em;
+            color: var(--brass); margin-top: 3px;
+        }
+        .bet-option-help { font-size: 0.72rem; color: var(--bone-mute); margin-top: 4px; }
+        .bet-option-edge {
+            font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.1em;
+            color: var(--bone-mute); margin-top: 3px;
+        }
+
+        .num-picker { display: flex; gap: 8px; margin: 10px 0 4px; }
+        .num-pick {
+            flex: 1; aspect-ratio: 1 / 1; max-width: 68px;
+            display: flex; align-items: center; justify-content: center;
+            font-family: var(--mono); font-size: 1.3rem;
+            background: var(--felt-2); border: 1px solid var(--felt-3);
+            border-radius: var(--r); cursor: pointer; color: var(--bone);
+        }
+        .num-pick:hover { border-color: var(--brass); }
+        .num-pick.selected { border-color: var(--brass); background: rgba(201,162,39,0.14); color: var(--brass); }
+        .num-pick.hit { border-color: var(--chip); color: var(--chip); }
+
+        .bead-line {
+            display: flex; flex-wrap: wrap; gap: 4px;
+            justify-content: center; margin: 14px 0 6px;
+        }
+        .bead {
+            width: 11px; height: 11px; border-radius: 50%;
+            background: var(--felt-3); border: 1px solid var(--felt-3);
+        }
+        .bead.final { background: var(--brass); border-color: var(--brass); }
+
+        .street-dots { display: flex; gap: 6px; justify-content: center; margin: 10px 0 2px; }
+        .street-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: var(--felt-3);
+        }
+        .street-dot.done { background: var(--brass); }
+        .street-dot.now  { background: var(--bone); }
+
+        .table-note {
+            font-size: 0.76rem; color: var(--bone-mute);
+            margin-top: 10px; line-height: 1.45;
+        }
+        .wager-line {
+            font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
+            text-transform: uppercase; color: var(--bone-mute); margin-top: 12px;
+        }
+        .wager-line span { color: var(--bone); margin-left: 5px; }
+
+        .rules-list { margin: 10px 0 0; padding-left: 17px; }
+        .rules-list li {
+            font-size: 0.78rem; color: var(--bone-dim);
+            margin-bottom: 4px; line-height: 1.4;
+        }
+
         .slot-stage { text-align: center; }
         .slot-balance {
             font-family: var(--mono);
@@ -979,7 +1109,14 @@
 
         @media (max-width: 380px) {
             .reel-cell { width: 42px; height: 42px; font-size: 1.35rem; }
-            .rail-item { font-size: 0.5rem; }
+            /* Seven tabs on a narrow phone: shrink the label, keep the glyph legible. */
+            .rail-item { font-size: 0.46rem; padding: 6px 1px; letter-spacing: 0.04em; }
+            .rail-glyph { font-size: 0.98rem; }
+            .playing-card { width: 46px; height: 65px; }
+            .playing-card .pc-rank { font-size: 1.1rem; }
+            .playing-card .pc-suit { font-size: 0.86rem; }
+            .card-slot { width: 46px; height: 65px; }
+            .head-name { max-width: 68px; }
         }
 
         /* two-up on wide screens where it genuinely helps */
@@ -1059,6 +1196,8 @@
             <span class="rail-glyph">◈</span><span>Scan</span></button>
         <button class="rail-item" data-nav="slots-lobby-view" onclick="showSlotsLobby()">
             <span class="rail-glyph">▦</span><span>Slots</span></button>
+        <button class="rail-item" data-nav="tables-lobby-view" onclick="showTablesLobby()">
+            <span class="rail-glyph">♠</span><span>Tables</span></button>
         <button class="rail-item" data-nav="deposit-view" onclick="showDeposit()">
             <span class="rail-glyph">₿</span><span>Funds</span></button>
         <button class="rail-item" data-nav="leaderboard-view" onclick="showLeaderboard()">
@@ -1372,6 +1511,68 @@
         </div>
 
         <!-- ===== Add funds ===== -->
+        <!-- ===== Tables lobby ===== -->
+        <div id="tables-lobby-view" class="hidden">
+            <div class="view-head">
+                <div class="view-title">The tables</div>
+                <div class="view-sub">Same seed, same proof as the slots. Wagers reward points, never your cash standing.</div>
+            </div>
+
+            <div class="card needs-card">
+                <div class="input-group" style="margin-bottom:0;">
+                    <label for="tables-card-id">Card ID</label>
+                    <input type="text" id="tables-card-id" placeholder="Scan or type a card ID"
+                           onchange="loadTablePlayer(this.value.trim())">
+                </div>
+            </div>
+
+            <div id="tables-resume" class="card hidden">
+                <div class="card-title">You left a hand open</div>
+                <div id="tables-resume-body" class="table-note"></div>
+                <button class="btn btn-small btn-gold" onclick="resumeRound()">Finish that hand</button>
+            </div>
+
+            <div id="table-list"><div class="empty">Loading…</div></div>
+        </div>
+
+        <!-- ===== Table play ===== -->
+        <div id="tables-play-view" class="hidden">
+            <button class="back-btn" onclick="tablesBack()">← All tables</button>
+            <div class="card slot-stage">
+                <div class="machine-name" id="table-title"></div>
+                <div class="machine-tagline" id="table-tagline"></div>
+                <div class="slot-balance">Balance <span id="table-balance">0</span></div>
+
+                <!-- Each game renders its own felt into here. -->
+                <div id="table-stage"></div>
+
+                <div id="table-result" class="spin-result"></div>
+
+                <div id="table-bet-controls">
+                    <div id="table-bet-picker" class="bet-picker"></div>
+                    <div class="bet-row">
+                        <button class="bet-adjust" onclick="adjustTableBet(-1)" aria-label="Lower bet">−</button>
+                        <div class="bet-display">
+                            <span id="table-bet-amount">25</span>
+                            <span class="bet-label" id="table-bet-label">Bet per hand</span>
+                        </div>
+                        <button class="bet-adjust" onclick="adjustTableBet(1)" aria-label="Raise bet">+</button>
+                    </div>
+                    <button class="btn btn-gold" id="table-deal-btn" onclick="dealTable()">Deal</button>
+                </div>
+
+                <div id="table-actions" class="table-actions"></div>
+                <div id="table-wager" class="wager-line hidden"></div>
+
+                <div class="slot-actions">
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="toggleTableRules()">Rules</button>
+                    <button class="btn btn-small btn-secondary" style="flex:1;" onclick="showSlotsLobby(); toggleFairness();">Fairness</button>
+                </div>
+
+                <div id="table-rules" class="paytable hidden"></div>
+            </div>
+        </div>
+
         <div id="deposit-view" class="hidden">
             <div class="view-head">
                 <div class="view-title">Add funds</div>
@@ -1569,6 +1770,7 @@
 
     <script src="/static/app.js"></script>
     <script src="/static/slots.js"></script>
+    <script src="/static/tables.js"></script>
     <script src="/static/payments.js"></script>
     <script>
         // Pick the card back up after a refresh or a phone locking its screen.

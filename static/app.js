@@ -69,7 +69,7 @@ async function restoreSession() {
 // Any view that still offers a card-ID box gets it filled in and tucked away
 // once we know who's playing.
 function syncCardInputs() {
-    ['slots-card-id', 'deposit-card-id'].forEach(id => {
+    ['slots-card-id', 'deposit-card-id', 'tables-card-id'].forEach(id => {
         const input = document.getElementById(id);
         if (input && currentCardId) input.value = currentCardId;
     });
@@ -139,6 +139,7 @@ async function submitIdentity() {
 // After the session changes, re-run the loader for the view that's on screen.
 function rehydrateActiveView() {
     if (activeView === 'slots-lobby-view' && typeof showSlotsLobby === 'function') showSlotsLobby();
+    else if (activeView === 'tables-lobby-view' && typeof showTablesLobby === 'function') showTablesLobby();
     else if (activeView === 'deposit-view' && typeof showDeposit === 'function') showDeposit();
     else if (activeView === 'scan-view' && currentCardId) processScan(currentCardId);
 }
@@ -235,7 +236,8 @@ function verdictFor(pnl) {
 function updateNav(viewId) {
     // Login views should light up the destination they lead to.
     const alias = { 'admin-login-view': 'admin-view', 'worker-login-view': 'worker-view',
-                    'slots-play-view': 'slots-lobby-view', 'summary-view': 'scan-view' };
+                    'slots-play-view': 'slots-lobby-view', 'summary-view': 'scan-view',
+                    'tables-play-view': 'tables-lobby-view' };
     const target = alias[viewId] || viewId;
     document.querySelectorAll('.rail-item').forEach(item => {
         item.classList.toggle('active', item.dataset.nav === target);
@@ -244,7 +246,8 @@ function updateNav(viewId) {
 
 function showView(viewId) {
     ['menu-view', 'scan-view', 'summary-view', 'leaderboard-view', 'worker-login-view', 'worker-view',
-     'admin-login-view', 'admin-view', 'slots-lobby-view', 'slots-play-view', 'deposit-view'].forEach(id => {
+     'admin-login-view', 'admin-view', 'slots-lobby-view', 'slots-play-view', 'deposit-view',
+     'tables-lobby-view', 'tables-play-view'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
