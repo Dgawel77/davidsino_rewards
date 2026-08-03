@@ -13,6 +13,8 @@ Loyalty and rewards tracking system for The Davidsino.
   with cryptographic proof the house isn't rigging results
 - **Provably fair table games** — blackjack, baccarat, fan-tan and Mississippi
   Stud, dealt from the same commit/reveal seed as the slots
+- **Provably fair arcade games** — crash (aviator), plinko and mines, priced to
+  the same 1% edge and drawn from the same seed
 
 ## Architecture
 - **Backend:** FastAPI (Python) + PostgreSQL (SQLite works for local dev)
@@ -20,6 +22,7 @@ Loyalty and rewards tracking system for The Davidsino.
 - **Card Reading:** USB HID readers (keyboard input) + Web NFC (Android Chrome)
 - **Slot engine:** `slots.py` — HMAC-SHA256 commit/reveal RNG, no dependencies
 - **Table engine:** `tables.py` — same RNG, driving a Fisher-Yates shuffle
+- **Arcade engine:** `arcade.py` — same RNG, driving crash/plinko/mines
 - **Payments:** `payments.py` — address book + payment URIs, no custody
 
 ## Quick Start
@@ -263,6 +266,37 @@ python3 scripts/verify_table.py \
     --hash <hash you were shown before playing> \
     --game blackjack --nonce 7
 ```
+
+## Provably Fair Arcade Games
+
+Three more, on the same seed pair, each priced to a **1% house edge**.
+
+| Game | Bet range | Return | Shape |
+|---|---|---|---|
+| Crash (aviator) | 25 – 2,500 | 99% at *every* cash-out target | multiplier doubles every 4.5s, capped at 1,000x |
+| Plinko | 25 – 2,500 | 98.87% / 98.93% / 98.77% | 12 rows, low / medium / high, top 10x / 68x / 469x |
+| Mines | 25 – 2,500 | 99% at every depth | 25 tiles, 1–24 mines, cash out whenever |
+
+What makes each one checkable:
+
+- **Crash** draws its bust point so that `P(bust >= x) = 0.99 / x`. That identity
+  is *why* the edge is the same whether you cash out at 1.1x or 100x — the tests
+  check the survival curve against it directly.
+- **Plinko** payouts are not hand-typed. A shape is scaled so the expected return
+  hits the target, then rounded; the true return is then enumerated exactly over
+  all 13 buckets against the binomial and published above.
+- **Mines** pays `C(25,k) / C(25-m,k)` less the edge — the exact inverse of the
+  chance of surviving `k` picks. Checked at every mine count and depth.
+
+```bash
+python3 tests/test_arcade.py                    # 60 engine tests
+DAVIDSINO_SLOW=1 python3 tests/test_arcade.py   # + the long crash return check
+```
+
+**Crash cash-outs are timed by the server**, against a start stamp it wrote
+itself. A client that reported its own multiplier would simply claim the bust
+point every round. A round you walk away from settles itself — the rocket had
+already gone, and leaving it open would hold your stake.
 
 ## Production Deployment
 

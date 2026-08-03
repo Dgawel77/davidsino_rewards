@@ -790,6 +790,113 @@
             100% { transform: scale(1); }
         }
 
+        /* ---------- crash ---------- */
+        .crash-stage { padding: 6px 0 2px; }
+        .crash-mult {
+            font-family: var(--mono); font-variant-numeric: tabular-nums;
+            font-size: 3.4rem; font-weight: 700; line-height: 1;
+            height: 62px; color: var(--bone);
+        }
+        .crash-mult.flying { color: var(--chip); }
+        .crash-mult.bust { color: var(--marker); }
+        .crash-mult.cashed { color: var(--brass); }
+        .crash-sub {
+            font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.18em;
+            text-transform: uppercase; color: var(--bone-mute);
+            height: 16px; margin-top: 8px;
+        }
+        .crash-track {
+            position: relative; height: 132px; margin: 14px 0 4px;
+            border: 1px solid var(--felt-3); border-radius: var(--r);
+            background: var(--felt-2); overflow: hidden;
+        }
+        .crash-curve { position: absolute; inset: 0; }
+        .crash-rocket {
+            position: absolute; font-size: 1.5rem; line-height: 1;
+            transform: translate(-50%, 50%); will-change: left, bottom;
+        }
+        .crash-rocket.gone { filter: grayscale(1); opacity: 0.5; }
+        .crash-grid-line {
+            position: absolute; left: 0; right: 0; height: 1px;
+            background: var(--felt-3);
+        }
+        .crash-grid-label {
+            position: absolute; right: 5px; transform: translateY(-50%);
+            font-family: var(--mono); font-size: 0.55rem; color: var(--bone-mute);
+        }
+
+        /* ---------- plinko ---------- */
+        .plinko-board {
+            position: relative; margin: 4px auto 6px;
+            height: 258px; max-width: 420px;
+        }
+        .plinko-pin {
+            position: absolute; width: 5px; height: 5px; border-radius: 50%;
+            background: var(--felt-3); transform: translate(-50%, -50%);
+        }
+        .plinko-ball {
+            position: absolute; width: 13px; height: 13px; border-radius: 50%;
+            background: var(--brass); transform: translate(-50%, -50%);
+            box-shadow: 0 0 9px rgba(201, 162, 39, 0.6);
+        }
+        .plinko-buckets { display: flex; gap: 2px; max-width: 420px; margin: 0 auto; }
+        .plinko-bucket {
+            flex: 1; min-width: 0;
+            font-family: var(--mono); font-size: 0.5rem;
+            padding: 5px 1px; text-align: center;
+            border-radius: 2px; background: var(--felt-2);
+            border: 1px solid var(--felt-3); color: var(--bone-mute);
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .plinko-bucket.hot { color: var(--brass); border-color: var(--brass); }
+        .plinko-bucket.landed {
+            background: var(--brass); color: var(--felt); border-color: var(--brass);
+        }
+
+        /* ---------- mines ---------- */
+        .mines-grid {
+            display: grid; grid-template-columns: repeat(5, 1fr);
+            gap: 7px; max-width: 340px; margin: 6px auto;
+        }
+        .mine-tile {
+            aspect-ratio: 1 / 1;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--felt-2); border: 1px solid var(--felt-3);
+            border-radius: var(--r); cursor: pointer;
+            font-size: 1.25rem; color: var(--bone-mute);
+            transition: background 0.12s, border-color 0.12s;
+            touch-action: manipulation;
+        }
+        .mine-tile:hover:not(.done) { border-color: var(--brass); background: var(--felt-3); }
+        .mine-tile.safe {
+            background: rgba(79, 169, 127, 0.16);
+            border-color: var(--chip); color: var(--chip); cursor: default;
+        }
+        .mine-tile.boom {
+            background: rgba(196, 69, 61, 0.22);
+            border-color: var(--marker); color: var(--marker); cursor: default;
+        }
+        .mine-tile.revealed { opacity: 0.42; cursor: default; }
+        .mine-tile.done { cursor: default; }
+        .mine-tile.pop { animation: minepop 0.28s ease-out; }
+        @keyframes minepop {
+            0% { transform: scale(0.82); }
+            55% { transform: scale(1.12); }
+            100% { transform: none; }
+        }
+        .mines-meta {
+            display: flex; justify-content: center; gap: 20px;
+            margin-top: 10px; height: 34px; align-items: center;
+        }
+        .mines-stat { text-align: center; }
+        .mines-stat-val {
+            font-family: var(--mono); font-variant-numeric: tabular-nums;
+            font-size: 1.05rem; color: var(--brass); display: block;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .mine-tile.pop { animation: none !important; }
+        }
+
         /* The toggles. Small, out of the way, but always reachable. */
         .table-prefs {
             display: flex; gap: 8px; justify-content: center;
@@ -1971,6 +2078,7 @@
     <script src="/static/app.js?v=__ASSET_VERSION__"></script>
     <script src="/static/slots.js?v=__ASSET_VERSION__"></script>
     <script src="/static/tables.js?v=__ASSET_VERSION__"></script>
+    <script src="/static/arcade.js?v=__ASSET_VERSION__"></script>
     <script src="/static/payments.js?v=__ASSET_VERSION__"></script>
     <script>
         // Pick the card back up after a refresh or a phone locking its screen.

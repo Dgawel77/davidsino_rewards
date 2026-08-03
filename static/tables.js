@@ -250,6 +250,43 @@ function updateTableBetDisplay() {
 
 function renderBetPicker() {
     const el = document.getElementById('table-bet-picker');
+
+    // The arcade games pick a risk setting rather than a bet type.
+    if (currentTable.key === 'plinko') {
+        el.innerHTML = Object.entries(currentTable.risks).map(([key, spec]) => `
+            <div class="bet-option ${key === plinkoRisk ? 'selected' : ''}"
+                 data-bet="${key}" onclick="selectPlinkoRisk('${key}')">
+                <div class="bet-option-label">${spec.label}</div>
+                <div class="bet-option-pays">up to ${spec.top}x</div>
+                <div class="bet-option-edge">rtp ${spec.rtp}%</div>
+            </div>`).join('');
+        return;
+    }
+    if (currentTable.key === 'mines') {
+        el.innerHTML = `
+            <div class="bet-option" onclick="adjustMines(-1)" style="flex:0 0 62px;">
+                <div class="bet-option-label">−</div></div>
+            <div class="bet-option selected" style="flex:1;">
+                <div class="bet-option-label" id="mines-picker-count">${mineCount} mines</div>
+                <div class="bet-option-edge">more mines, bigger steps</div></div>
+            <div class="bet-option" onclick="adjustMines(1)" style="flex:0 0 62px;">
+                <div class="bet-option-label">+</div></div>`;
+        return;
+    }
+    if (currentTable.key === 'crash') {
+        el.innerHTML = `
+            <div class="bet-option ${crashTarget === null ? 'selected' : ''}"
+                 data-bet="manual" onclick="setCrashTarget(null)">
+                <div class="bet-option-label">Manual</div>
+                <div class="bet-option-help">Cash out by hand</div></div>
+            ${[1.5, 2, 5].map(t => `
+            <div class="bet-option ${crashTarget === t ? 'selected' : ''}"
+                 data-bet="${t}" onclick="setCrashTarget(${t})">
+                <div class="bet-option-label">${t.toFixed(2)}x</div>
+                <div class="bet-option-help">Auto out</div></div>`).join('')}`;
+        return;
+    }
+
     if (!currentTable.bets) { el.innerHTML = ''; return; }
 
     el.innerHTML = Object.entries(currentTable.bets).map(([key, spec]) => {
@@ -365,6 +402,9 @@ function seqTail(cards, n, start, animate) {
 
 function renderIdleStage() {
     const stage = document.getElementById('table-stage');
+    if (currentTable.key === 'crash') { renderCrashIdle(); return; }
+    if (currentTable.key === 'plinko') { renderPlinkoIdle(); return; }
+    if (currentTable.key === 'mines') { renderMinesIdle(); return; }
     if (currentTable.key === 'fan_tan') { renderNumberPicker(); return; }
     if (currentTable.key === 'baccarat') {
         stage.innerHTML = `
@@ -440,6 +480,9 @@ async function dealTable() {
     const body = { card_id: currentCardId, game: currentTable.key, bet: tableBet };
     if (tableBetType) body.bet_type = tableBetType;
     if (currentTable.key === 'fan_tan') body.picks = tablePicks;
+    if (currentTable.key === 'plinko') body.risk = plinkoRisk;
+    if (currentTable.key === 'mines') body.mines = mineCount;
+    if (currentTable.key === 'crash' && crashTarget) body.target = crashTarget;
 
     try {
         const resp = await fetch(`${API_BASE}/api/tables/deal`, {
@@ -487,6 +530,22 @@ function setBettingEnabled(on) {
 function renderInstantResult(data) {
     const stage = document.getElementById('table-stage');
     const anim = motionOn();
+
+    if (data.game === 'plinko') {
+        animatePlinko(data);
+        showTableResult(`${data.multiplier}x`, data.net > 0 ? 'win' : (data.net === 0 ? '' : 'lose'));
+        updateTableBalance(tableBalance, data.net);
+        const delay = motionOn() ? 12 * 105 + 250 : 200;
+        setTimeout(() => {
+            const net = data.net;
+            if (net > 0) SFX.win(); else if (net === 0) SFX.push(); else SFX.lose();
+            showTableResult(net > 0 ? `${data.multiplier}x — +${Math.round(net).toLocaleString()} points`
+                                    : `${data.multiplier}x — ${net === 0 ? 'even'
+                                       : '−' + Math.abs(Math.round(net)).toLocaleString() + ' points'}`,
+                            net > 0 ? 'win' : (net === 0 ? '' : 'lose'));
+        }, delay);
+        return;
+    }
 
     if (data.game === 'baccarat') {
         const winner = data.outcome;
@@ -556,6 +615,8 @@ function renderRound(round) {
     setBettingEnabled(!live);
 
     if (round.game === 'blackjack') renderBlackjack(round);
+    else if (round.game === 'crash') renderCrash(round);
+    else if (round.game === 'mines') renderMines(round);
     else renderMississippi(round);
 
     const wager = document.getElementById('table-wager');
@@ -758,6 +819,12 @@ const ACTION_SLOTS = {
         { action: 'raise', multiple: 3, label: '3× raise', key: '3', gold: true },
         { action: 'fold',  label: 'Fold', key: 'F' },
     ],
+    crash: [
+        { action: 'cashout', label: 'Cash out', key: 'C', gold: true },
+    ],
+    mines: [
+        { action: 'cashout', label: 'Cash out', key: 'C', gold: true },
+    ],
 };
 
 // `available` is the list of action names the server says are legal right now.
@@ -932,7 +999,7 @@ function autoStep() {
     scheduleAuto(motionOn() ? settle : 700);
 }
 
-async function tableAct(action, multiple) {
+async function tableAct(action, multiple, tile) {
     if (tableBusy || !activeRound) return;
     tableBusy = true;
     // Raising and doubling put more out; hit, stand and fold just acknowledge.
@@ -949,6 +1016,7 @@ async function tableAct(action, multiple) {
                 round_id: activeRound.round_id,
                 action: action,
                 multiple: multiple || null,
+                tile: (tile === undefined ? null : tile),
             })
         });
         const data = await resp.json();
