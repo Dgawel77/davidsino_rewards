@@ -9,6 +9,144 @@ let currentLeaderboardSort = 'pnl';
 // Kept in memory only, so dealer-only endpoints can be called with the PIN header.
 let adminPin = null;
 
+// ===== The session =====
+// One card ID for the whole app. Scan once at the door and every view — slots,
+// funds, your standing — knows who you are. Persisted so a refresh or a phone
+// locking its screen doesn't put you back at the door.
+const SESSION_KEY = 'davidsino.card';
+let currentPlayer = null;
+let activeView = 'menu-view';
+
+function setSession(player, cardId) {
+    currentPlayer = player;
+    currentCardId = cardId || (player && player.card_id) || currentCardId;
+    currentPlayerId = player ? player.id : null;
+    try { localStorage.setItem(SESSION_KEY, currentCardId); } catch (e) { /* private mode */ }
+    setHeaderPlayer(player);
+    syncCardInputs();
+}
+
+function clearSession() {
+    currentPlayer = null;
+    currentCardId = null;
+    currentPlayerId = null;
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* private mode */ }
+    setHeaderPlayer(null);
+    syncCardInputs();
+    closeIdentityMenu();
+}
+
+// Re-scan the card we already hold, to pull fresh points/standing.
+async function refreshSession() {
+    if (!currentCardId) return null;
+    try {
+        const resp = await fetch(`${API_BASE}/api/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: currentCardId })
+        });
+        const data = await resp.json();
+        if (data.registered) {
+            setSession(data.player, currentCardId);
+            return data.player;
+        }
+        // Card was deleted out from under us.
+        clearSession();
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function restoreSession() {
+    let saved = null;
+    try { saved = localStorage.getItem(SESSION_KEY); } catch (e) { /* private mode */ }
+    if (!saved) { setHeaderPlayer(null); return; }
+    currentCardId = saved;
+    await refreshSession();
+}
+
+// Any view that still offers a card-ID box gets it filled in and tucked away
+// once we know who's playing.
+function syncCardInputs() {
+    ['slots-card-id', 'deposit-card-id'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input && currentCardId) input.value = currentCardId;
+    });
+    document.querySelectorAll('.needs-card').forEach(el => {
+        el.classList.toggle('hidden', !!currentCardId);
+    });
+}
+
+// ===== Header identity control =====
+function toggleIdentityMenu() {
+    const menu = document.getElementById('identity-menu');
+    const btn = document.getElementById('identity-btn');
+    if (!menu) return;
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !opening);
+    if (btn) btn.setAttribute('aria-expanded', String(opening));
+
+    const input = document.getElementById('identity-input');
+    const err = document.getElementById('identity-error');
+    if (err) err.classList.add('hidden');
+    if (opening && input) {
+        input.value = currentCardId || '';
+        input.focus();
+        input.select();
+    }
+}
+
+function closeIdentityMenu() {
+    const menu = document.getElementById('identity-menu');
+    const btn = document.getElementById('identity-btn');
+    if (menu) menu.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// Typed a card ID straight into the header — look it up and take the session.
+async function submitIdentity() {
+    const input = document.getElementById('identity-input');
+    const err = document.getElementById('identity-error');
+    if (!input) return;
+    const cardId = input.value.trim();
+    if (!cardId) return;
+
+    const fail = (msg) => {
+        if (!err) return;
+        err.textContent = msg;
+        err.classList.remove('hidden');
+    };
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: cardId })
+        });
+        const data = await resp.json();
+        if (!data.registered) return fail('Not on file — see the dealer');
+
+        setSession(data.player, cardId);
+        closeIdentityMenu();
+        // Refresh whatever view is open so it picks up the new player.
+        rehydrateActiveView();
+    } catch (e) {
+        fail('Connection error');
+    }
+}
+
+// After the session changes, re-run the loader for the view that's on screen.
+function rehydrateActiveView() {
+    if (activeView === 'slots-lobby-view' && typeof showSlotsLobby === 'function') showSlotsLobby();
+    else if (activeView === 'deposit-view' && typeof showDeposit === 'function') showDeposit();
+    else if (activeView === 'scan-view' && currentCardId) processScan(currentCardId);
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.identity')) closeIdentityMenu();
+});
+
 // Check NFC support
 function checkNFC() {
     const statusEl = document.getElementById('nfc-status');
@@ -52,14 +190,26 @@ function setTally(containerId, value, scale) {
 function setHeaderPlayer(player) {
     const empty = document.getElementById('head-empty');
     const box = document.getElementById('head-player');
+    const stats = document.getElementById('head-stats');
+    const idle = document.getElementById('head-idle');
     if (!box || !empty) return;
+
+    // Options that only make sense once a card is in hand.
+    ['identity-standing', 'identity-signout'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !player);
+    });
 
     if (!player) {
         box.classList.add('hidden');
         empty.classList.remove('hidden');
+        if (stats) stats.classList.add('hidden');
+        if (idle) idle.classList.remove('hidden');
         return;
     }
 
+    if (stats) stats.classList.remove('hidden');
+    if (idle) idle.classList.add('hidden');
     document.getElementById('head-name').textContent = player.name;
     document.getElementById('head-points').textContent =
         Math.floor(player.reward_points).toLocaleString();
@@ -99,6 +249,7 @@ function showView(viewId) {
         if (el) el.classList.add('hidden');
     });
     document.getElementById(viewId).classList.remove('hidden');
+    activeView = viewId;
     updateNav(viewId);
     window.scrollTo(0, 0);
 }
@@ -108,10 +259,10 @@ function backToMenu() {
         currentScanAbort.abort();
         currentScanAbort = null;
     }
+    // Drop staff privileges only. The player's card stays scanned in — going
+    // back to the menu is navigation, not signing out.
     currentRole = null;
     adminPin = null;
-    currentCardId = null;
-    currentPlayerId = null;
     showView('menu-view');
 }
 
@@ -216,7 +367,7 @@ async function processScan(cardId) {
             statusEl.textContent = 'Found it';
             statusEl.className = 'scan-status found';
 
-            currentPlayerId = data.player.id;
+            setSession(data.player, cardId);
             document.getElementById('result-name').textContent = data.player.name;
             document.getElementById('result-points').textContent = data.player.reward_points.toFixed(0);
             document.getElementById('result-cashin').textContent = '$' + data.player.total_cash_in.toFixed(2);
@@ -230,8 +381,6 @@ async function processScan(cardId) {
             const verdictEl = document.getElementById('result-net-label');
             verdictEl.textContent = verdict.text;
             verdictEl.style.color = verdict.color;
-
-            setHeaderPlayer(data.player);
 
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');
@@ -797,7 +946,9 @@ async function selectSearchedPlayer(playerId) {
             verdictEl.textContent = verdict.text;
             verdictEl.style.color = verdict.color;
 
-            setHeaderPlayer(player);
+            // A dealer looking someone up shouldn't take over the header —
+            // that still belongs to whoever's card is scanned in.
+            if (player.card_id === currentCardId) setSession(player, currentCardId);
 
             document.getElementById('player-result').classList.remove('hidden');
             document.getElementById('unregistered-result').classList.add('hidden');

@@ -109,8 +109,64 @@
             border-bottom: 1px solid var(--felt-3);
             min-height: 66px;
         }
-        .head-empty { color: var(--bone-mute); font-size: 0.82rem; }
-        .head-player { display: flex; align-items: center; gap: 18px; }
+        .head-empty { color: var(--bone-dim); font-size: 0.82rem; letter-spacing: 0.02em; }
+        .head-empty-glyph { color: var(--brass); margin-right: 5px; }
+        .head-stats { display: flex; align-items: center; gap: 18px; }
+
+        /* ---------- identity: top-left, scan in or type the card ID ---------- */
+        .identity { position: relative; margin-top: 12px; }
+        .identity-btn {
+            width: 100%;
+            background: var(--felt-2);
+            border: 1px solid var(--felt-3);
+            border-radius: var(--r);
+            color: inherit; font: inherit;
+            padding: 7px 9px;
+            cursor: pointer;
+            display: flex; align-items: center; gap: 6px;
+            text-align: left;
+        }
+        .identity-btn:hover { border-color: var(--brass); }
+        .head-player { display: flex; align-items: center; min-width: 0; }
+        .head-name {
+            font-weight: 600; font-size: 0.88rem;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .identity-caret { margin-left: auto; color: var(--bone-mute); font-size: 0.7rem; }
+
+        .identity-menu {
+            position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+            background: var(--felt-2); border: 1px solid var(--felt-3);
+            border-radius: var(--r); width: 230px; overflow: hidden;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+        }
+        .identity-form { padding: 12px 12px 10px; border-bottom: 1px solid var(--felt-3); }
+        .identity-form label {
+            display: block; font-family: var(--mono); font-size: 0.62rem;
+            letter-spacing: 0.18em; text-transform: uppercase;
+            color: var(--bone-mute); margin-bottom: 6px;
+        }
+        .identity-row { display: flex; gap: 6px; }
+        .identity-row input {
+            flex: 1; min-width: 0;
+            background: var(--felt); border: 1px solid var(--felt-3);
+            border-radius: var(--r); color: var(--bone);
+            font-family: var(--mono); font-size: 0.85rem; padding: 7px 8px;
+        }
+        .identity-row input:focus { outline: none; border-color: var(--brass); }
+        .identity-go {
+            background: var(--brass); color: var(--felt); border: none;
+            border-radius: var(--r); font: inherit; font-size: 0.78rem;
+            font-weight: 600; padding: 0 12px; cursor: pointer;
+        }
+        .identity-error { color: var(--marker); font-size: 0.74rem; margin-top: 6px; }
+        .identity-opt {
+            display: block; width: 100%; text-align: left; background: none;
+            border: none; color: var(--bone); font: inherit; font-size: 0.84rem;
+            padding: 10px 13px; cursor: pointer;
+        }
+        .identity-opt:hover { background: var(--felt-3); }
+        .identity-opt.danger { color: var(--marker); border-top: 1px solid var(--felt-3); }
         .head-name { font-weight: 600; font-size: 0.95rem; }
         .head-stat { text-align: right; }
         .head-stat .eyebrow { display: block; margin-bottom: 1px; }
@@ -853,31 +909,40 @@
            RESPONSIVE - rail becomes a bottom bar
            ============================================================ */
         @media (max-width: 899px) {
+            /* Keep identity top-left on phones too — the brand block shrinks
+               to just the card control and shares the top row with the stats. */
             .shell {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, auto) minmax(0, 1fr);
                 grid-template-rows: auto 1fr auto;
-                grid-template-areas: "head" "main" "rail";
+                grid-template-areas: "brand head" "main main" "rail rail";
             }
-            .brand { display: none; }
+            .brand {
+                padding: 9px 8px 9px 12px;
+                border-right: none;
+                display: flex;
+                align-items: center;
+                position: sticky;
+                top: 0;
+                z-index: 21;
+                background: var(--felt);
+                min-height: 58px;
+            }
+            .brand-mark, .brand-name { display: none; }
+            .identity { margin-top: 0; }
+            .identity-btn { padding: 7px 8px; }
+            .head-name { max-width: 92px; }
+            .identity-menu { width: 244px; }
+
             .head {
-                justify-content: space-between;
-                padding: 12px 16px;
+                justify-content: flex-end;
+                padding: 12px 16px 12px 8px;
                 position: sticky;
                 top: 0;
                 z-index: 20;
                 background: var(--felt);
                 min-height: 58px;
             }
-            .head::before {
-                content: "DAVIDSINO";
-                font-family: var(--mono);
-                font-size: 0.68rem;
-                letter-spacing: 0.2em;
-                color: var(--brass);
-                flex-shrink: 0;
-            }
-            .head-player { gap: 14px; }
-            .head-name { display: none; }
+            .head-stats { gap: 14px; }
             .main { padding: 18px 16px 96px; }
 
             .rail {
@@ -940,12 +1005,44 @@
     <div class="brand">
         <div class="brand-mark">Est. Tonight</div>
         <div class="brand-name">The Davidsino</div>
+
+        <!-- Identity lives top-left: scan in, or just type the card ID. -->
+        <div class="identity">
+            <button class="identity-btn" id="identity-btn" onclick="toggleIdentityMenu()"
+                    aria-haspopup="true" aria-expanded="false">
+                <span id="head-empty" class="head-empty">
+                    <span class="head-empty-glyph">◈</span>Scan in
+                </span>
+                <span id="head-player" class="head-player hidden">
+                    <span class="head-name" id="head-name"></span>
+                </span>
+                <span class="identity-caret">▾</span>
+            </button>
+
+            <div id="identity-menu" class="identity-menu hidden">
+                <div class="identity-form">
+                    <label for="identity-input">Card ID</label>
+                    <div class="identity-row">
+                        <input type="text" id="identity-input" placeholder="e.g. TEST123"
+                               autocomplete="off" spellcheck="false"
+                               onkeypress="if(event.key==='Enter') submitIdentity()">
+                        <button class="identity-go" onclick="submitIdentity()">Go</button>
+                    </div>
+                    <div id="identity-error" class="identity-error hidden"></div>
+                </div>
+                <button class="identity-opt" onclick="closeIdentityMenu(); startScan();">
+                    ◈ Scan a card</button>
+                <button class="identity-opt" id="identity-standing"
+                        onclick="closeIdentityMenu(); startScan();">Where I stand</button>
+                <button class="identity-opt danger" id="identity-signout"
+                        onclick="clearSession()">Sign out</button>
+            </div>
+        </div>
     </div>
 
     <header class="head">
-        <div id="head-empty" class="head-empty">No card on file</div>
-        <div id="head-player" class="head-player hidden">
-            <div class="head-name" id="head-name"></div>
+        <div id="head-idle" class="head-empty">No card on file</div>
+        <div id="head-stats" class="head-stats hidden">
             <div class="head-stat">
                 <span class="eyebrow">Points</span>
                 <span class="head-stat-val" id="head-points">0</span>
@@ -1164,7 +1261,7 @@
             </div>
 
             <div class="card">
-                <div class="input-group">
+                <div class="input-group needs-card">
                     <label for="slots-card-id">Card ID</label>
                     <input type="text" id="slots-card-id" placeholder="Scan or type a card ID"
                            onchange="loadSlotPlayer(this.value.trim())">
@@ -1285,7 +1382,7 @@
                 <div class="grid-2">
                     <div class="card">
                         <div class="card-title">Amount</div>
-                        <div class="input-group">
+                        <div class="input-group needs-card">
                             <label for="deposit-card-id">Card ID</label>
                             <input type="text" id="deposit-card-id" placeholder="Scan or type a card ID">
                         </div>
@@ -1473,5 +1570,9 @@
     <script src="/static/app.js"></script>
     <script src="/static/slots.js"></script>
     <script src="/static/payments.js"></script>
+    <script>
+        // Pick the card back up after a refresh or a phone locking its screen.
+        restoreSession();
+    </script>
 </body>
 </html>

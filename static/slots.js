@@ -19,12 +19,12 @@ const REEL_SYMBOLS = {
 // ===== Lobby =====
 async function showSlotsLobby() {
     showView('slots-lobby-view');
-    if (currentCardId) {
-        document.getElementById('slots-card-id').value = currentCardId;
-    }
+    syncCardInputs();
     await loadMachines();
-    const cardId = document.getElementById('slots-card-id').value.trim();
+    // The card you scanned at the door is the card you play on. No second login.
+    const cardId = currentCardId || document.getElementById('slots-card-id').value.trim();
     if (cardId) loadSlotPlayer(cardId);
+    else document.getElementById('slots-player-banner').classList.add('hidden');
 }
 
 async function loadMachines() {
@@ -61,7 +61,7 @@ async function loadSlotPlayer(cardId) {
             document.getElementById('slots-player-name').textContent = data.player.name;
             document.getElementById('slots-player-points').textContent = Math.floor(slotBalance).toLocaleString();
             banner.classList.remove('hidden');
-            setHeaderPlayer(data.player);
+            setSession(data.player, cardId);
             return true;
         }
         banner.classList.add('hidden');
@@ -73,9 +73,10 @@ async function loadSlotPlayer(cardId) {
 
 // ===== Machine view =====
 async function openMachine(key) {
-    const cardId = document.getElementById('slots-card-id').value.trim();
+    const cardId = currentCardId || document.getElementById('slots-card-id').value.trim();
     if (!cardId) {
-        alert('Enter a card ID first');
+        // No card in hand — send them to the one place that takes one.
+        toggleIdentityMenu();
         return;
     }
     const found = await loadSlotPlayer(cardId);

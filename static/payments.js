@@ -13,9 +13,7 @@ async function showDeposit() {
     activeRequestId = null;
     selectedMethod = null;
 
-    if (currentCardId) {
-        document.getElementById('deposit-card-id').value = currentCardId;
-    }
+    syncCardInputs();
     await loadDepositMethods();
 }
 
@@ -77,12 +75,12 @@ function setDepositAmount(amount) {
 }
 
 async function submitDepositRequest() {
-    const cardId = document.getElementById('deposit-card-id').value.trim();
+    const cardId = currentCardId || document.getElementById('deposit-card-id').value.trim();
     const amount = parseFloat(document.getElementById('deposit-amount').value);
     const errEl = document.getElementById('deposit-error');
     errEl.classList.add('hidden');
 
-    if (!cardId) return showDepositError('Enter your card ID');
+    if (!cardId) return showDepositError('Scan in first — use the card control up top');
     if (isNaN(amount) || amount <= 0) return showDepositError('Enter an amount');
     if (amount > depositMaxUsd) return showDepositError(`Max deposit is $${depositMaxUsd.toLocaleString()}`);
     if (!selectedMethod) return showDepositError('Pick a payment method');
