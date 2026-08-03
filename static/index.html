@@ -1768,10 +1768,12 @@
     </main>
 </div>
 
-    <script src="/static/app.js"></script>
-    <script src="/static/slots.js"></script>
-    <script src="/static/tables.js"></script>
-    <script src="/static/payments.js"></script>
+    <!-- ?v= is stamped by the server from the newest asset mtime, so a redeploy
+         can never leave a browser running a mix of old and new bundles. -->
+    <script src="/static/app.js?v=__ASSET_VERSION__"></script>
+    <script src="/static/slots.js?v=__ASSET_VERSION__"></script>
+    <script src="/static/tables.js?v=__ASSET_VERSION__"></script>
+    <script src="/static/payments.js?v=__ASSET_VERSION__"></script>
     <script>
         // Pick the card back up after a refresh or a phone locking its screen.
         restoreSession();

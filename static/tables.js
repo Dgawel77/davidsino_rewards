@@ -71,7 +71,13 @@ async function checkForOpenHand() {
     try {
         const resp = await fetch(`${API_BASE}/api/tables/active?card_id=${encodeURIComponent(currentCardId)}`);
         const data = await resp.json();
-        if (!data.active) { box.classList.add('hidden'); return; }
+        if (!data.active) {
+            // Clear any stale round we were still holding, or a later guard
+            // could think a finished hand is still live.
+            activeRound = null;
+            box.classList.add('hidden');
+            return;
+        }
 
         activeRound = data.active;
         const g = tableGames.find(x => x.key === data.active.game);
@@ -379,7 +385,11 @@ function renderInstantResult(data) {
 function renderRound(round) {
     activeRound = round;
     const live = round.status === 'active';
-    document.getElementById('table-bet-controls').classList.toggle('hidden', live);
+
+    // While a hand is live the only way to stake more is the action buttons, so
+    // the deal controls stay out of the way. Once it settles, "Next hand" is the
+    // single way forward — showing Deal as well was two buttons for one job.
+    document.getElementById('table-bet-controls').classList.add('hidden');
 
     if (round.game === 'blackjack') renderBlackjack(round);
     else renderMississippi(round);
@@ -388,7 +398,10 @@ function renderRound(round) {
     wager.innerHTML = `On the table <span>${Math.round(round.wagered).toLocaleString()}</span>`;
     wager.classList.remove('hidden');
 
-    if (!live) {
+    if (live) {
+        // Clear the "Dealing…" placeholder — the hand is dealt and it's your move.
+        showTableResult('', '');
+    } else {
         activeRound = null;
         const net = round.payout - round.wagered;
         if (net > 0) showTableResult(`+${Math.round(net).toLocaleString()} points`, 'win');
@@ -495,6 +508,7 @@ function renderActions(actions) {
 
 function nextHand() {
     activeRound = null;
+    document.getElementById('table-wager').classList.add('hidden');
     enterTableView();
 }
 

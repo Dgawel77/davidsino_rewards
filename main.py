@@ -274,7 +274,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+class RevalidatingStatic(StaticFiles):
+    """
+    Static files that a browser must always revalidate.
+
+    Starlette sends only ETag and Last-Modified. With no Cache-Control, browsers
+    fall back to *heuristic* freshness and may serve a cached copy without asking
+    the server at all — so a redeploy silently leaves people running old JS. The
+    failure is nasty: index.html arrives fresh with a button wired to a function
+    that only exists in the new app.js, the browser serves the old app.js from
+    cache, and the button does nothing at all with no visible error.
+
+    `no-cache` still allows caching; it just forces a revalidation first, so an
+    unchanged file costs an empty 304 and a changed one is picked up at once.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
+app.mount("/static", RevalidatingStatic(directory="static"), name="static")
 
 def get_db():
     db = SessionLocal()
@@ -318,9 +339,29 @@ def record_event(db: Session, player_id: int, event_type: str, cash_amount: floa
 # ============================================================
 # Routes - Public
 # ============================================================
+def _asset_version() -> str:
+    """
+    A stamp that changes whenever any front-end file does.
+
+    Belt and braces alongside the no-cache headers: even a proxy or a browser
+    that ignores them cannot reuse a bundle whose URL has changed.
+    """
+    newest = 0.0
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    for name in os.listdir(static_dir):
+        if name.endswith((".js", ".css")):
+            newest = max(newest, os.path.getmtime(os.path.join(static_dir, name)))
+    return str(int(newest))
+
+
 @app.get("/")
 def serve_frontend():
-    return FileResponse("static/index.html")
+    # The shell must never be stale — it is what points at every other asset.
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html")
+    with open(path, encoding="utf-8") as fh:
+        html = fh.read().replace("__ASSET_VERSION__", _asset_version())
+    return Response(content=html, media_type="text/html",
+                    headers={"Cache-Control": "no-store, must-revalidate"})
 
 @app.get("/api/health")
 def health_check():
