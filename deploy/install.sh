@@ -75,7 +75,7 @@ mkdir -p "$DATA_DIR"
 # .env holds the secrets and is written exactly once, so re-running the
 # installer never rotates a PIN or invalidates everyone's cards.
 if [ ! -f "$DATA_DIR/.env" ]; then
-    gen() { python3 -c "import secrets;print(secrets.token_hex(8).upper())"; }
+    gen() { python3 -c "import secrets;print(secrets.token_hex(8))"; }
     pin() { python3 -c "import secrets;print(''.join(secrets.choice('0123456789') for _ in range(6)))"; }
     cat > "$DATA_DIR/.env" <<EOF
 # Written once by deploy/install.sh. Edit freely; it is never overwritten.

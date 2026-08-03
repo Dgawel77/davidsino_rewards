@@ -1479,8 +1479,9 @@
                 <div class="identity-form">
                     <label for="identity-input">Card ID</label>
                     <div class="identity-row">
-                        <input type="text" id="identity-input" placeholder="e.g. TEST123"
+                        <input type="text" id="identity-input" placeholder="e.g. a1b2c3d4e5f6a7b8"
                                autocomplete="off" spellcheck="false"
+                               autocapitalize="none" autocorrect="off"
                                onkeypress="if(event.key==='Enter') submitIdentity()">
                         <button class="identity-go" onclick="submitIdentity()">Go</button>
                     </div>
@@ -1722,6 +1723,7 @@
                 <div class="input-group needs-card">
                     <label for="slots-card-id">Card ID</label>
                     <input type="text" id="slots-card-id" placeholder="Scan or type a card ID"
+                           autocapitalize="none" autocorrect="off" spellcheck="false"
                            onchange="loadSlotPlayer(this.value.trim())">
                 </div>
                 <div id="slots-player-banner" class="hidden">
@@ -1920,7 +1922,8 @@
                         <div class="card-title">Amount</div>
                         <div class="input-group needs-card">
                             <label for="deposit-card-id">Card ID</label>
-                            <input type="text" id="deposit-card-id" placeholder="Scan or type a card ID">
+                            <input type="text" id="deposit-card-id" placeholder="Scan or type a card ID"
+                           autocapitalize="none" autocorrect="off" spellcheck="false">
                         </div>
                         <div class="input-group">
                             <label for="deposit-amount">US dollars</label>

@@ -511,7 +511,7 @@ def scan_card(request: ScanRequest, http_request: Request, db: Session_ = Depend
             status_code=429,
             detail=f"Too many bad cards. Wait {SCAN_LOCKOUT_MINUTES} minutes or see the dealer.")
 
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         _note_scan_failure(ip)
         return {"registered": False, "card_id": request.card_id}
@@ -852,7 +852,7 @@ def admin_auth(request: AdminAuth):
 @app.post("/api/admin/register")
 def register_player(request: RegisterRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Register a new player"""
-    existing = db.query(Player).filter(Player.card_id == request.card_id).first()
+    existing = find_player(db, request.card_id)
     if existing:
         raise HTTPException(status_code=400, detail="Card already registered")
 
@@ -877,7 +877,7 @@ def register_player(request: RegisterRequest, db: Session_ = Depends(get_db), _:
 @app.post("/api/admin/deposit")
 def record_deposit(request: DepositRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Record a cash deposit"""
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -918,7 +918,7 @@ def record_deposit(request: DepositRequest, db: Session_ = Depends(get_db), _: N
 @app.post("/api/admin/cashout")
 def record_cashout(request: LossRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Record a cash-out"""
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -949,7 +949,7 @@ def record_cashout(request: LossRequest, db: Session_ = Depends(get_db), _: None
 @app.post("/api/admin/add_points")
 def add_reward_points(request: AdjustmentRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Manually add reward points"""
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -978,7 +978,7 @@ def add_reward_points(request: AdjustmentRequest, db: Session_ = Depends(get_db)
 @app.post("/api/admin/redeem_points")
 def redeem_points(request: AdjustmentRequest, db: Session_ = Depends(get_db), _: None = Depends(require_admin)):
     """Redeem reward points"""
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -1033,7 +1033,7 @@ def create_deposit_request(request: DepositRequestCreate, db: Session_ = Depends
         raise HTTPException(status_code=400,
                             detail=f"Amount must be between $0 and ${MAX_DEPOSIT_USD:,.0f}")
 
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -1255,7 +1255,7 @@ def get_slot_seed(card_id: str = Query(...), db: Session_ = Depends(get_db),
     the matching secret is only revealed when the seed is rotated.
     """
     require_self(me, card_id)
-    player = db.query(Player).filter(Player.card_id == card_id).first()
+    player = find_player(db, card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -1272,7 +1272,7 @@ def rotate_slot_seed(request: SlotSeedRotateRequest, db: Session_ = Depends(get_
     every spin made under it can be recomputed with /api/slots/verify.
     """
     require_self(me, request.card_id)
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -1316,7 +1316,7 @@ def slot_spin(request: SlotSpinRequest, db: Session_ = Depends(get_db),
                    me: Player = Depends(current_player)):
     """One provably fair spin, wagering reward points."""
     require_self(me, request.card_id)
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
@@ -1460,8 +1460,23 @@ def _expire_stale_crash(db: Session_, player: Player) -> None:
             _settle_round(db, player, rnd, arcade_engine.crash_expire(state))
 
 
+def find_player(db: Session_, card_id: str):
+    """
+    Look a card up without caring about case or stray whitespace.
+
+    Card IDs are hex. A phone keyboard capitalises the first character by
+    default, RFID readers disagree about case, and people retype these by hand —
+    none of which should be the difference between playing and "not on file".
+    """
+    if not card_id:
+        return None
+    return (db.query(Player)
+              .filter(func.lower(Player.card_id) == card_id.strip().lower())
+              .first())
+
+
 def _table_player(db: Session_, card_id: str) -> Player:
-    player = db.query(Player).filter(Player.card_id == card_id).first()
+    player = find_player(db, card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
     return player
@@ -1853,7 +1868,7 @@ def worker_redeem(request: WorkerRedeemRequest, db: Session_ = Depends(get_db),
         raise HTTPException(status_code=400, detail="Invalid reward type")
 
     reward = PRESET_REWARDS[request.reward_key]
-    player = db.query(Player).filter(Player.card_id == request.card_id).first()
+    player = find_player(db, request.card_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 

@@ -36,8 +36,9 @@ def card_for(name: str) -> str:
     override = os.getenv(f"SEED_CARD_{name.upper()}")
     if override:
         return override.strip()
-    # 16 hex chars: the shape of an RFID UID, but not guessable.
-    return secrets.token_hex(8).upper()
+    # 16 hex chars: the shape of an RFID UID, but not guessable. Lower case
+    # because it is easier to read out and type; lookups ignore case anyway.
+    return secrets.token_hex(8)
 
 
 def main_seed(show_only: bool = False) -> int:
