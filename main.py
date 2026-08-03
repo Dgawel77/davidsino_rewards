@@ -1251,6 +1251,22 @@ def table_deal(request: TableDealRequest, db: Session = Depends(get_db)):
     upfront = request.bet * 4 if request.game == "mississippi" else request.bet
     bet = _check_bet(game, request.bet, player, need=upfront if request.game == "mississippi" else None)
 
+    # One live hand at a time. Without this a player could deal blackjack, walk
+    # off, deal a stud hand, and leave the first one open with its points already
+    # debited — and the lobby only ever surfaces the most recent open round, so
+    # those points would quietly strand. Instant games settle in this call and
+    # can never strand anything, so they stay available.
+    if request.game in tables_engine.ROUND_GAMES:
+        open_round = (db.query(TableRound)
+                        .filter(TableRound.player_id == player.id,
+                                TableRound.status == "active")
+                        .order_by(TableRound.id.desc()).first())
+        if open_round:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Finish your open {tables_engine.TABLES[open_round.game]['name']} "
+                       f"hand first — {open_round.wagered:.0f} points are still on it.")
+
     # Lock the seed row so two concurrent hands can never share a nonce.
     seed = _active_seed(db, player.id, lock=True)
     nonce = seed.nonce

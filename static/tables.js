@@ -83,6 +83,15 @@ async function checkForOpenHand() {
     }
 }
 
+// Pull the open hand from the server and drop the player straight into it.
+async function jumpToOpenHand() {
+    await checkForOpenHand();
+    if (!activeRound) return;
+    const g = tableGames.find(x => x.key === activeRound.game);
+    if (g) currentTable = g;
+    resumeRound();
+}
+
 function resumeRound() {
     if (!activeRound) return;
     const g = tableGames.find(x => x.key === activeRound.game);
@@ -307,6 +316,9 @@ async function dealTable() {
         const data = await resp.json();
         if (!resp.ok) {
             showTableResult(data.detail || 'That hand was refused', 'lose');
+            // 409 means a hand is already open — take them to it rather than
+            // leaving them staring at an error they can't act on.
+            if (resp.status === 409) await jumpToOpenHand();
             return;
         }
         updateTableBalance(data.reward_points);
