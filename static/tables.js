@@ -220,8 +220,15 @@ function adjustTableBet(dir) {
     if (!steps.length) return;
     let i = steps.indexOf(tableBet);
     if (i === -1) i = 0;
-    i = Math.max(0, Math.min(steps.length - 1, i + dir));
-    tableBet = steps[i];
+    const next = Math.max(0, Math.min(steps.length - 1, i + dir));
+
+    // Chips stacking on the way up, a single chip lifted on the way down; a
+    // flat tone at the ends so a dead press still tells you it registered.
+    if (next === i) SFX.button();
+    else if (dir > 0) { SFX.chip(); SFX.chip(0.07); }
+    else SFX.chip();
+
+    tableBet = steps[next];
     updateTableBetDisplay();
 }
 
@@ -251,6 +258,7 @@ function renderBetPicker() {
 }
 
 function selectTableBet(key) {
+    if (key !== tableBetType) SFX.chip();
     tableBetType = key;
     document.querySelectorAll('.bet-option').forEach(el => {
         el.classList.toggle('selected', el.dataset.bet === key);
@@ -282,6 +290,7 @@ function renderNumberPicker() {
 }
 
 function toggleFanPick(n) {
+    SFX.button();
     const need = currentTable.bets[tableBetType].picks;
     if (tablePicks.includes(n)) {
         if (tablePicks.length <= need) return;   // keep the bet complete
@@ -363,6 +372,15 @@ async function dealTable() {
     tableBusy = true;
     setDealEnabled(false);
     showTableResult('Dealing…', '');
+    SFX.chip();                       // the bet going out
+
+    // Every deal starts from an empty felt. This has to happen here rather than
+    // only on entering the table: since a settled hand goes straight back to the
+    // Deal button, the second hand would otherwise still be compared against the
+    // first one's card counts, come out as "nothing new", and neither animate
+    // nor make a sound.
+    lastBlackjackCounts = { dealer: 0, hands: [] };
+    lastStudCounts = { hole: 0, community: 0 };
 
     const body = { card_id: currentCardId, game: currentTable.key, bet: tableBet };
     if (tableBetType) body.bet_type = tableBetType;
@@ -630,6 +648,9 @@ function renderActions(actions) {
 async function tableAct(action, multiple) {
     if (tableBusy || !activeRound) return;
     tableBusy = true;
+    // Raising and doubling put more out; hit, stand and fold just acknowledge.
+    if (action === 'double' || action === 'raise') SFX.chip();
+    else SFX.button();
     document.querySelectorAll('#table-actions .btn').forEach(b => b.disabled = true);
 
     try {
